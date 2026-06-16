@@ -1,0 +1,14 @@
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --omit=dev
+
+COPY server.js ./
+
+ENV PORT=4003
+ENV SQLITE_PATH=/data/mos-sport.sqlite
+EXPOSE 4003
+
+CMD ["npm", "start"]

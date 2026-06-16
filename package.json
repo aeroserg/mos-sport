@@ -1,0 +1,26 @@
+{
+  "name": "mos-sport",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frontend for outdoor.sport.mos.ru registration helper",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:gh-pages": "GH_PAGES=true vite build",
+    "preview": "vite preview",
+    "predeploy": "npm run build:gh-pages",
+    "deploy": "gh-pages -d dist -r git@github.com:aeroserg/mos-sport.git"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "gh-pages": "^6.3.0",
+    "vite": "^5.4.19"
+  }
+}

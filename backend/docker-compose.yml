@@ -1,0 +1,18 @@
+services:
+  mos-sport-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mos-sport-backend
+    restart: unless-stopped
+    ports:
+      - "4003:4003"
+    environment:
+      PORT: 4003
+      OUTDOOR_API_BASE_URL: https://api.outdoor.sport.mos.ru
+      CORS_ORIGIN: "*"
+      SQLITE_PATH: /data/mos-sport.sqlite
+      MONITOR_INTERVAL_MS: 30000
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    volumes:
+      - ./data:/data

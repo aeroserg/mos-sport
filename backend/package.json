@@ -1,0 +1,16 @@
+{
+  "name": "mos-sport-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend proxy for outdoor.sport.mos.ru registration helper",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2"
+  }
+}
