@@ -12,7 +12,7 @@ services:
       OUTDOOR_API_BASE_URL: https://api.outdoor.sport.mos.ru
       CORS_ORIGIN: "*"
       SQLITE_PATH: /data/mos-sport.sqlite
-      MONITOR_INTERVAL_MS: 30000
+      MONITOR_INTERVAL_MS: 10000
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     volumes:
       - ./data:/data

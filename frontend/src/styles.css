@@ -56,6 +56,59 @@ select {
   padding: 32px 16px 64px;
 }
 
+.toast-viewport {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  display: grid;
+  gap: 12px;
+  width: min(420px, calc(100vw - 24px));
+}
+
+.toast {
+  position: relative;
+  border-radius: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 20px 60px rgba(2, 6, 23, 0.35);
+}
+
+.toast-success {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.toast-error {
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.toast-title {
+  padding-right: 24px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.toast-message {
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+
+.toast-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  min-width: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #cbd5e1;
+}
+
+.toast-close:hover:enabled {
+  background: rgba(148, 163, 184, 0.12);
+}
+
 .container {
   width: min(1200px, 100%);
   margin: 0 auto;
@@ -311,6 +364,13 @@ pre {
 }
 
 @media (max-width: 640px) {
+  .toast-viewport {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+  }
+
   .hero,
   .panel,
   .response-card {

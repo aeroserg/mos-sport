@@ -9,6 +9,29 @@ const eventTypeLabels = {
   tournament_120: 'Турнир 120 минут',
   tournament_180: 'Турнир 180 минут'
 }
+const venueCourtMap = {
+  '12': {
+    title: 'Баррикадная',
+    courts: {
+      '10': 'Корт 1',
+      '11': 'Корт 2'
+    }
+  },
+  '14': {
+    title: 'Третьяковская',
+    courts: {
+      '12': 'Корт 1',
+      '13': 'Корт 2'
+    }
+  },
+  '15': {
+    title: 'Римская',
+    courts: {
+      '14': 'Корт 1',
+      '15': 'Корт 2'
+    }
+  }
+}
 const openingHourMinutes = 10 * 60
 const closingHourMinutes = 22 * 60
 
@@ -62,6 +85,29 @@ const initialResponses = {
   confirm: null
 }
 
+const stepMeta = {
+  session: {
+    successTitle: 'Сессия создана',
+    errorTitle: 'Не удалось создать сессию'
+  },
+  hold: {
+    successTitle: 'Слот удержан',
+    errorTitle: 'Не удалось удержать слот'
+  },
+  smsSend: {
+    successTitle: 'SMS отправлено',
+    errorTitle: 'Не удалось отправить SMS'
+  },
+  smsVerify: {
+    successTitle: 'Код подтверждён',
+    errorTitle: 'Не удалось проверить код'
+  },
+  confirm: {
+    successTitle: 'Запись подтверждена',
+    errorTitle: 'Не удалось подтвердить запись'
+  }
+}
+
 function formatRemaining(totalSeconds) {
   if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
     return '00:00'
@@ -71,6 +117,37 @@ function formatRemaining(totalSeconds) {
   const seconds = totalSeconds % 60
 
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function getFirstErrorMessage(payload) {
+  const data = getResponseData(payload)
+
+  if (Array.isArray(data?.errors) && data.errors[0]?.message) {
+    return String(data.errors[0].message)
+  }
+
+  if (data?.message) {
+    return String(data.message)
+  }
+
+  if (data?.error && data?.message) {
+    return String(data.message)
+  }
+
+  if (typeof data?.raw_text === 'string' && data.raw_text.trim()) {
+    return data.raw_text.trim()
+  }
+
+  if (typeof data === 'string' && data.trim()) {
+    return data.trim()
+  }
+
+  return 'Неизвестная ошибка'
+}
+
+function isSessionExpiredResponse(payload) {
+  const message = getFirstErrorMessage(payload)
+  return message.includes('Registration session is not active') || message.includes('Registration session expired')
 }
 
 function getResponseData(response) {
@@ -206,18 +283,24 @@ function getCourtVenueId(court) {
   return venueId ?? ''
 }
 
+function getCourtTitleByVenue(venueId, courtId, fallbackTitle) {
+  return venueCourtMap[String(venueId)]?.courts?.[String(courtId)] || fallbackTitle || `Корт ${courtId}`
+}
+
 function normalizeDateOptionCourts(response, venueId) {
   const payload = getResponseData(response)
   const courts = Array.isArray(payload?.courts) ? payload.courts : []
+  const serverNow = payload?.server_now || ''
 
   return courts.map((court) => ({
     id: court.court_id,
-    title: court.court_title || `Корт ${court.court_number || court.court_id}`,
-    name: court.court_title || `Корт ${court.court_number || court.court_id}`,
+    title: getCourtTitleByVenue(venueId, court.court_id, court.court_title || `Корт ${court.court_number || court.court_id}`),
+    name: getCourtTitleByVenue(venueId, court.court_id, court.court_title || `Корт ${court.court_number || court.court_id}`),
     venue_id: venueId,
     has_bookable_slots: Boolean(court.has_bookable_slots),
     available_dates: Array.isArray(court.available_dates) ? court.available_dates : [],
-    available_events: Array.isArray(court.available_events) ? court.available_events : []
+    available_events: Array.isArray(court.available_events) ? court.available_events : [],
+    server_now: serverNow
   }))
 }
 
@@ -282,8 +365,6 @@ function extractAvailabilityEvents(response) {
 }
 
 function buildSlots(events, context = {}) {
-  const requiredTickets = Number(context.tickets_count) || 1
-
   return events.flatMap((event) =>
     (event.starts || []).flatMap((start) => {
       const startsAt = start.starts_at
@@ -308,7 +389,7 @@ function buildSlots(events, context = {}) {
             booking_open: durationValue?.booking_open
           }
         })
-        .filter((durationOption) => durationOption.available_tickets >= requiredTickets)
+        .filter((durationOption) => durationOption.available_tickets > 0 && durationOption.booking_open === true)
         .sort((left, right) => left.duration_minutes - right.duration_minutes)
 
       if (!durationOptions.length) {
@@ -319,9 +400,9 @@ function buildSlots(events, context = {}) {
         key: [context.event_type || event.event_type || 'free_play', context.court_id || 'court', event.id, startsAt].join(':'),
         event_id: event.id,
         starts_at: startsAt,
-        tickets_count: requiredTickets,
+        tickets_count: 1,
         court_id: String(context.court_id || ''),
-        court_title: context.court_title || `Корт ${context.court_id || ''}`.trim(),
+        court_title: getCourtTitleByVenue(context.venue_id, context.court_id, context.court_title || `Корт ${context.court_id || ''}`.trim()),
         venue_id: String(context.venue_id || ''),
         event_title: getEventTypeLabel(context.event_type || event.event_type, event.title),
         event_type: context.event_type || event.event_type || 'free_play',
@@ -333,7 +414,6 @@ function buildSlots(events, context = {}) {
 }
 
 function buildSlotsFromDateOptions(courts, context = {}) {
-  const requiredTickets = Number(context.tickets_count) || 1
   const allowedDates = new Set(context.search_dates || [])
 
   return courts.flatMap((court) =>
@@ -345,16 +425,22 @@ function buildSlotsFromDateOptions(courts, context = {}) {
       }
 
       const durationOptions = (event.available_slots || [])
-        .map((slot) => ({
-          key: `${slot.duration_minutes}`,
-          duration_minutes: Number(slot.duration_minutes),
-          ends_at: slot.ends_at || event.ends_at || '',
-          available_tickets: Number(slot.available_tickets ?? slot.raw_available_tickets) || 0,
-          booking_opens_at: slot.booking_opens_at || '',
-          enabled: true,
-          booking_open: true
-        }))
-        .filter((durationOption) => durationOption.available_tickets >= requiredTickets)
+        .map((slot) => {
+          const bookingOpensAt = slot.booking_opens_at || ''
+          const bookingOpen =
+            bookingOpensAt && court.server_now ? new Date(court.server_now).getTime() >= new Date(bookingOpensAt).getTime() : true
+
+          return {
+            key: `${slot.duration_minutes}`,
+            duration_minutes: Number(slot.duration_minutes),
+            ends_at: slot.ends_at || event.ends_at || '',
+            available_tickets: Number(slot.available_tickets ?? slot.raw_available_tickets) || 0,
+            booking_opens_at: bookingOpensAt,
+            enabled: null,
+            booking_open: bookingOpen
+          }
+        })
+        .filter((durationOption) => durationOption.available_tickets > 0 && durationOption.booking_open === true)
         .sort((left, right) => left.duration_minutes - right.duration_minutes)
 
       if (!durationOptions.length) {
@@ -367,9 +453,9 @@ function buildSlotsFromDateOptions(courts, context = {}) {
         key: [context.event_type || event.event_type || 'free_play', court.id, event.event_id || event.id, startsAt].join(':'),
         event_id: event.event_id || event.id,
         starts_at: startsAt,
-        tickets_count: requiredTickets,
+        tickets_count: 1,
         court_id: String(court.id || event.court_id || ''),
-        court_title: court.title || court.name || `Корт ${court.id || event.court_id || ''}`.trim(),
+        court_title: getCourtTitleByVenue(context.venue_id, court.id || event.court_id || '', court.title || court.name || `Корт ${court.id || event.court_id || ''}`.trim()),
         venue_id: String(context.venue_id || event.venue_id || ''),
         event_title: getEventTypeLabel(context.event_type || event.event_type, event.title),
         event_type: context.event_type || event.event_type || 'free_play',
@@ -490,7 +576,7 @@ export default function App() {
   const [responses, setResponses] = useState(initialResponses)
   const [smsCode, setSmsCode] = useState('')
   const [verified, setVerified] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [toasts, setToasts] = useState([])
   const [smsCooldownUntil, setSmsCooldownUntil] = useState(null)
   const [now, setNow] = useState(Date.now())
   const [loadingStep, setLoadingStep] = useState('')
@@ -506,10 +592,14 @@ export default function App() {
     [venues]
   )
 
+  const requestedTickets = Math.max(1, Number(form.tickets_count) || 1)
+
   const eventTypeOptions = useMemo(() => {
     const grouped = new Map()
 
-    slots.forEach((slot) => {
+    slots
+      .filter((slot) => Number(slot.max_available_tickets) >= requestedTickets)
+      .forEach((slot) => {
       const key = String(slot.event_type)
       const current = grouped.get(key)
 
@@ -529,12 +619,13 @@ export default function App() {
     })
 
     return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, 'ru'))
-  }, [slots])
+  }, [requestedTickets, slots])
 
   const availableDateOptions = useMemo(() => {
     const grouped = new Map()
 
     slots
+      .filter((slot) => Number(slot.max_available_tickets) >= requestedTickets)
       .filter((slot) => !form.event_type || String(slot.event_type) === String(form.event_type))
       .forEach((slot) => {
         const dateValue = slot.starts_at?.slice(0, 10)
@@ -551,12 +642,13 @@ export default function App() {
       })
 
     return Array.from(grouped.values()).sort((left, right) => left.value.localeCompare(right.value))
-  }, [form.event_type, slots])
+  }, [form.event_type, requestedTickets, slots])
 
   const availableCourts = useMemo(() => {
     const grouped = new Map()
 
     slots
+      .filter((slot) => Number(slot.max_available_tickets) >= requestedTickets)
       .filter((slot) => !form.event_type || String(slot.event_type) === String(form.event_type))
       .filter((slot) => !form.date || slot.starts_at?.slice(0, 10) === String(form.date))
       .forEach((slot) => {
@@ -572,9 +664,9 @@ export default function App() {
       })
 
     return Array.from(grouped.values()).sort((left, right) => left.title.localeCompare(right.title, 'ru'))
-  }, [form.date, form.event_type, slots])
+  }, [form.date, form.event_type, requestedTickets, slots])
 
-  const visibleSlots = useMemo(
+  const slotsMatchingFiltersWithoutTickets = useMemo(
     () =>
       slots.filter((slot) => {
         if (form.event_type && String(slot.event_type) !== String(form.event_type)) {
@@ -592,6 +684,36 @@ export default function App() {
         return true
       }),
     [form.court_id, form.date, form.event_type, slots]
+  )
+
+  const availableTicketsMax = useMemo(() => {
+    if (!slotsMatchingFiltersWithoutTickets.length) {
+      return 1
+    }
+
+    return Math.max(...slotsMatchingFiltersWithoutTickets.map((slot) => Number(slot.max_available_tickets) || 1))
+  }, [slotsMatchingFiltersWithoutTickets])
+
+  const selectedDurationTicketsMax = useMemo(() => {
+    if (!selectedSlot) {
+      return availableTicketsMax
+    }
+
+    const matchedDuration = selectedSlot.duration_options.find(
+      (item) => String(item.duration_minutes) === String(form.duration_minutes)
+    )
+
+    if (matchedDuration) {
+      return Math.max(1, Number(matchedDuration.available_tickets) || 1)
+    }
+
+    return Math.max(1, Number(selectedSlot.max_available_tickets) || 1)
+  }, [availableTicketsMax, form.duration_minutes, selectedSlot])
+
+  const visibleSlots = useMemo(
+    () =>
+      slotsMatchingFiltersWithoutTickets.filter((slot) => Number(slot.max_available_tickets) >= requestedTickets),
+    [requestedTickets, slotsMatchingFiltersWithoutTickets]
   )
 
   const courtMap = useMemo(
@@ -675,7 +797,15 @@ export default function App() {
     }
 
     const selectedDuration =
-      selectedSlot.duration_options.find((item) => String(item.duration_minutes) === String(form.duration_minutes)) || null
+      selectedSlot.duration_options.find(
+        (item) =>
+          String(item.duration_minutes) === String(form.duration_minutes) &&
+          Number(item.available_tickets) >= Math.max(1, Number(form.tickets_count) || 1)
+      ) ||
+      selectedSlot.duration_options.find(
+        (item) => Number(item.available_tickets) >= Math.max(1, Number(form.tickets_count) || 1)
+      ) ||
+      null
 
     if (!selectedDuration) {
       return
@@ -686,6 +816,24 @@ export default function App() {
       ends_at: selectedDuration.ends_at
     }))
   }, [form.duration_minutes, manualMode, selectedSlot])
+
+  useEffect(() => {
+    if (manualMode) {
+      return
+    }
+
+    const currentTickets = Math.max(1, Number(form.tickets_count) || 1)
+    const nextTickets = Math.min(currentTickets, selectedDurationTicketsMax)
+
+    if (currentTickets === nextTickets) {
+      return
+    }
+
+    setForm((current) => ({
+      ...current,
+      tickets_count: String(nextTickets)
+    }))
+  }, [form.tickets_count, manualMode, selectedDurationTicketsMax])
 
   useEffect(() => {
     if (manualMode || manualCourtMode) {
@@ -816,6 +964,30 @@ export default function App() {
     return Math.max(0, Math.ceil((smsCooldownUntil - now) / 1000))
   }, [smsCooldownUntil, now])
 
+  function removeToast(id) {
+    setToasts((current) => current.filter((toast) => toast.id !== id))
+  }
+
+  function pushToast(type, title, message, code) {
+    const id = `${Date.now()}:${Math.random()}`
+    const duration = type === 'success' ? 2000 : 4000
+
+    setToasts((current) => [
+      ...current,
+      {
+        id,
+        type,
+        title,
+        message,
+        code
+      }
+    ])
+
+    window.setTimeout(() => {
+      removeToast(id)
+    }, duration)
+  }
+
   function updateForm(event) {
     const { name, value, type, checked } = event.target
     setForm((current) => ({
@@ -890,7 +1062,6 @@ export default function App() {
       buildSlotsFromDateOptions(item.courts || [], {
         event_type: eventType,
         venue_id: form.venue_id,
-        tickets_count: form.tickets_count,
         search_dates: searchDates
       })
     )
@@ -950,8 +1121,7 @@ export default function App() {
           event_type: response.event_type,
           court_id: response.court_id,
           court_title: response.court_title,
-          venue_id: response.venue_id,
-          tickets_count: form.tickets_count
+          venue_id: response.venue_id
         })
       )
 
@@ -1009,19 +1179,8 @@ export default function App() {
     }
   }
 
-function checkSessionNotice(payload) {
-    const serialized = JSON.stringify(getResponseData(payload))
-
-    if (
-      serialized.includes('Registration session is not active') ||
-      serialized.includes('Registration session expired')
-    ) {
-      setNotice('Сессия истекла, повторите цепочку с начала')
-    }
-  }
-
   function setValidationNotice(message) {
-    setNotice(message)
+    pushToast('error', 'Ошибка', message, '')
     return false
   }
 
@@ -1034,8 +1193,12 @@ function checkSessionNotice(payload) {
   }
 
   function validateForHold() {
-    if (!sessionId || !form.event_id || !form.starts_at || !form.ends_at || !form.duration_minutes || !form.tickets_count) {
-      return setValidationNotice('Для удержания слота нужны session_id, event_id, время начала, время окончания, длительность и количество мест.')
+    if (!form.venue_id || !form.court_id || !form.event_type || !form.date) {
+      return setValidationNotice('Для удержания слота выберите площадку, корт, формат и дату.')
+    }
+
+    if (!form.event_id || !form.starts_at || !form.ends_at || !form.duration_minutes || !form.tickets_count) {
+      return setValidationNotice('Для удержания слота нужны event_id, время начала, время окончания, длительность и количество мест.')
     }
 
     if (manualMode && !isScheduleValid(form.date, form.start_time, form.duration_minutes)) {
@@ -1075,12 +1238,24 @@ function checkSessionNotice(payload) {
 
   async function runStep(stepKey, handler) {
     setLoadingStep(stepKey)
-    setNotice('')
 
     try {
       const response = await handler()
       updateResponse(stepKey, response)
-      checkSessionNotice(response)
+
+      const { successTitle, errorTitle } = stepMeta[stepKey] || {}
+      const code = response?.httpStatus || response?.status || ''
+
+      if ((response?.httpStatus || 500) < 400) {
+        if (successTitle) {
+          pushToast('success', successTitle, 'Операция выполнена успешно', code)
+        }
+      } else if (isSessionExpiredResponse(response)) {
+        pushToast('error', errorTitle || 'Ошибка', 'Сессия истекла, повторите цепочку с начала', code)
+      } else {
+        pushToast('error', errorTitle || 'Ошибка', getFirstErrorMessage(response), code)
+      }
+
       return response
     } catch (error) {
       const payload = {
@@ -1092,6 +1267,8 @@ function checkSessionNotice(payload) {
         }
       }
       updateResponse(stepKey, payload)
+      const { errorTitle } = stepMeta[stepKey] || {}
+      pushToast('error', errorTitle || 'Ошибка', getFirstErrorMessage(payload), payload.httpStatus)
       return payload
     } finally {
       setLoadingStep('')
@@ -1128,18 +1305,70 @@ function checkSessionNotice(payload) {
       return
     }
 
-    const response = await runStep('hold', () =>
-      requestJson('/hold', 'PUT', {
-        session_id: sessionId,
+    setSessionId('')
+    setHoldId('')
+    setExpiresAt('')
+    setAvailableBeforeHold(null)
+    setAvailableAfterHold(null)
+    setVerified(false)
+    setSmsCode('')
+    setSmsCooldownUntil(null)
+    setLoadingStep('hold')
+
+    try {
+      const sessionResponse = await requestJson('/session', 'POST', {
+        event_type: form.event_type,
+        venue_id: Number(form.venue_id),
+        court_id: Number(form.court_id),
+        date: form.date
+      })
+
+      updateResponse('session', sessionResponse)
+
+      if ((sessionResponse?.httpStatus || 500) >= 400) {
+        if (isSessionExpiredResponse(sessionResponse)) {
+          pushToast('error', 'Не удалось создать сессию', 'Сессия истекла, повторите цепочку с начала', sessionResponse.httpStatus)
+        } else {
+          pushToast('error', 'Не удалось создать сессию', getFirstErrorMessage(sessionResponse), sessionResponse.httpStatus)
+        }
+        return
+      }
+
+      const sessionData = getResponseData(sessionResponse)
+      syncSessionState(sessionData)
+
+      if (!sessionData.session_id) {
+        pushToast('error', 'Не удалось создать сессию', 'API не вернул session_id', sessionResponse.httpStatus)
+        return
+      }
+
+      const holdResponse = await requestJson('/hold', 'PUT', {
+        session_id: String(sessionData.session_id),
         event_id: Number(form.event_id),
         starts_at: form.starts_at,
         ends_at: form.ends_at,
         duration_minutes: Number(form.duration_minutes),
         tickets_count: Number(form.tickets_count)
       })
-    )
 
-    syncSessionState(getResponseData(response))
+      updateResponse('hold', holdResponse)
+
+      if ((holdResponse?.httpStatus || 500) >= 400) {
+        if (isSessionExpiredResponse(holdResponse)) {
+          pushToast('error', 'Не удалось удержать слот', 'Сессия истекла, повторите цепочку с начала', holdResponse.httpStatus)
+        } else {
+          pushToast('error', 'Не удалось удержать слот', getFirstErrorMessage(holdResponse), holdResponse.httpStatus)
+        }
+        return
+      }
+
+      syncSessionState(getResponseData(holdResponse))
+      pushToast('success', 'Слот удержан', 'Сессия создана и слот успешно удержан', holdResponse.httpStatus)
+    } catch (error) {
+      pushToast('error', 'Не удалось удержать слот', error instanceof Error ? error.message : 'Неизвестная ошибка', 500)
+    } finally {
+      setLoadingStep('')
+    }
   }
 
   async function handleSmsSend() {
@@ -1220,6 +1449,7 @@ function checkSessionNotice(payload) {
 
   return (
     <div className="page">
+      <ToastViewport toasts={toasts} onClose={removeToast} />
       <div className="container">
         <header className="hero">
           <div>
@@ -1245,8 +1475,6 @@ function checkSessionNotice(payload) {
             </div>
           </div>
         </header>
-
-        {notice ? <div className="notice notice-error">{notice}</div> : null}
 
         <section className="panel">
           <div className="panel-head">
@@ -1306,8 +1534,8 @@ function checkSessionNotice(payload) {
                   value={form.court_id}
                   onChange={updateForm}
                   min="10"
-                  max="14"
-                  placeholder="От 10 до 14"
+                  max="15"
+                  placeholder="От 10 до 15"
                 />
               ) : (
                 <select name="court_id" value={form.court_id} onChange={updateForm}>
@@ -1379,11 +1607,13 @@ function checkSessionNotice(payload) {
                     disabled={!selectedSlot}
                   >
                     <option value="">{selectedSlot ? 'Выберите длительность' : 'Сначала выберите время'}</option>
-                    {(selectedSlot?.duration_options || []).map((durationOption) => (
+                    {(selectedSlot?.duration_options || [])
+                      .filter((durationOption) => Number(durationOption.available_tickets) >= Math.max(1, Number(form.tickets_count) || 1))
+                      .map((durationOption) => (
                       <option key={durationOption.key} value={durationOption.duration_minutes}>
                         {durationOption.duration_minutes} минут
                       </option>
-                    ))}
+                      ))}
                   </select>
                 </label>
                 <label>
@@ -1394,7 +1624,7 @@ function checkSessionNotice(payload) {
                     value={form.tickets_count}
                     onChange={updateForm}
                     min="1"
-                    max="99"
+                    max={Math.max(1, selectedDurationTicketsMax)}
                     placeholder="Например: 1"
                   />
                 </label>
@@ -1506,11 +1736,8 @@ function checkSessionNotice(payload) {
         <section className="panel">
           <h2>Шаги</h2>
           <div className="actions">
-            <button type="button" onClick={handleCreateSession} disabled={loadingStep === 'session'}>
-              {loadingStep === 'session' ? 'Создание...' : '1. Создать сессию'}
-            </button>
-            <button type="button" onClick={handleHold} disabled={!sessionId || loadingStep === 'hold'}>
-              {loadingStep === 'hold' ? 'Удержание...' : '2. Удержать слот'}
+            <button type="button" onClick={handleHold} disabled={loadingStep === 'hold'}>
+              {loadingStep === 'hold' ? 'Удержание...' : '1. Удержать слот'}
             </button>
             <button
               type="button"
@@ -1520,8 +1747,8 @@ function checkSessionNotice(payload) {
               {loadingStep === 'smsSend'
                 ? 'Отправка...'
                 : smsRetryInSeconds > 0
-                  ? `3. Повтор через ${smsRetryInSeconds} с`
-                  : '3. Отправить SMS'}
+                  ? `2. Повтор через ${smsRetryInSeconds} с`
+                  : '2. Отправить SMS'}
             </button>
           </div>
 
@@ -1535,7 +1762,7 @@ function checkSessionNotice(payload) {
               onClick={handleSmsVerify}
               disabled={!sessionId || !holdId || !smsCode || loadingStep === 'smsVerify'}
             >
-              {loadingStep === 'smsVerify' ? 'Проверка...' : '4. Проверить код'}
+              {loadingStep === 'smsVerify' ? 'Проверка...' : '3. Проверить код'}
             </button>
             <button
               type="button"
@@ -1543,7 +1770,7 @@ function checkSessionNotice(payload) {
               onClick={handleConfirm}
               disabled={!verified || loadingStep === 'confirm'}
             >
-              {loadingStep === 'confirm' ? 'Подтверждение...' : '5. Подтвердить запись'}
+              {loadingStep === 'confirm' ? 'Подтверждение...' : '4. Подтвердить запись'}
             </button>
           </div>
 
@@ -1554,27 +1781,26 @@ function checkSessionNotice(payload) {
           </div>
         </section>
 
-        <section className="responses">
-          <ResponseBlock title="Слоты из availability" payload={responses.availability} />
-          <ResponseBlock title="1. Создание сессии" payload={responses.session} />
-          <ResponseBlock title="2. Удержание слота" payload={responses.hold} />
-          <ResponseBlock title="3. Отправка SMS" payload={responses.smsSend} />
-          <ResponseBlock title="4. Проверка SMS" payload={responses.smsVerify} />
-          <ResponseBlock title="5. Подтверждение записи" payload={responses.confirm} />
-        </section>
       </div>
     </div>
   )
 }
 
-function ResponseBlock({ title, payload }) {
+function ToastViewport({ toasts, onClose }) {
   return (
-    <article className="response-card">
-      <div className="response-header">
-        <h3>{title}</h3>
-        <span>{payload ? `HTTP ${payload.httpStatus}` : 'Нет данных'}</span>
-      </div>
-      <pre>{payload ? JSON.stringify(payload, null, 2) : 'Ожидание запроса...'}</pre>
-    </article>
+    <div className="toast-viewport">
+      {toasts.map((toast) => (
+        <div key={toast.id} className={`toast toast-${toast.type}`}>
+          <button type="button" className="toast-close" onClick={() => onClose(toast.id)}>
+            ×
+          </button>
+          <div className="toast-title">
+            {toast.title}
+            {toast.code ? ` · HTTP ${toast.code}` : ''}
+          </div>
+          <div className="toast-message">{toast.message}</div>
+        </div>
+      ))}
+    </div>
   )
 }

@@ -2,13 +2,15 @@
 
 Проект разделён на две части:
 
-- frontend в корне репозитория: `React + Vite`
+- `frontend/`: `React + Vite`
 - `backend/`: отдельный `Express` proxy для `api.outdoor.sport.mos.ru`
 
 ## Структура
 
-- `src/` — frontend
-- `backend/server.js` — backend API proxy
+- `frontend/src/` — frontend исходники
+- `frontend/vite.config.js` — конфиг Vite
+- `frontend/package.json` — frontend зависимости и скрипты
+- `backend/src/` — backend API proxy и Telegram monitor
 - `backend/Dockerfile` — контейнер backend
 - `backend/docker-compose.yml` — compose для сервера
 - `Makefile` — общий деплой frontend и backend
@@ -26,6 +28,7 @@ make install
 Запуск frontend:
 
 ```bash
+cd frontend
 npm run dev
 ```
 
@@ -45,6 +48,7 @@ https://mos-sport.explaingpt.ru/api
 Для локальной разработки можно переопределить:
 
 ```bash
+cd frontend
 VITE_API_BASE_URL=http://localhost:4003/api npm run dev
 ```
 
@@ -53,7 +57,7 @@ VITE_API_BASE_URL=http://localhost:4003/api npm run dev
 Backend слушает порт `4003` и проксирует:
 
 - `GET /api/venues`
-- `GET /api/courts`
+- `GET /api/date-options`
 - `GET /api/availability`
 - `POST /api/session`
 - `PUT /api/hold`
@@ -108,7 +112,9 @@ make deploy-backend
 
 - создаёт `/home/admin/mos-sport-backend`
 - копирует `backend/package.json`
-- копирует `backend/server.js`
+- копирует `backend/src/*`
+- копирует `backend/tsconfig.json`
+- копирует `backend/eslint.config.mjs`
 - копирует `backend/Dockerfile`
 - копирует `backend/docker-compose.yml`
 - выполняет `docker compose up -d --build`
