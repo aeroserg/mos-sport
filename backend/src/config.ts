@@ -13,6 +13,9 @@ export const MAX_ALERT_DATE = '2026-09-30'
 export const SUPPORTED_MONITOR_EVENT_TYPES = ['free_play', 'masterclass'] as const
 export const DURATION_OPTIONS = [30, 60, 90, 120, 180] as const
 export const DEFAULT_NOTIFY_MODES = ['ready'] as const
+export const CONSENT_DOCUMENT_FILENAME = '81758d52-3d00-45ae-a7ca-ba526f3d45c1.docx'
+export const CONSENT_DOCUMENT_URL =
+  process.env.CONSENT_DOCUMENT_URL || `https://aeroserg.github.io/mos-sport/${CONSENT_DOCUMENT_FILENAME}`
 
 export const EVENT_TYPE_LABELS: Record<string, string> = {
   free_play: 'Свободная игра',

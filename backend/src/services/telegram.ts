@@ -33,12 +33,13 @@ async function telegramApi<T>(method: string, payload: unknown): Promise<Telegra
 export async function sendTelegramMessage(
   chatId: string,
   text: string,
-  replyMarkup: InlineKeyboardMarkup | null
+  replyMarkup: InlineKeyboardMarkup | null,
+  options?: { parseMode?: 'HTML' | 'MarkdownV2' | null }
 ): Promise<number | null> {
   const result = await telegramApi<{ message_id: number }>('sendMessage', {
     chat_id: chatId,
     text,
-    parse_mode: 'HTML',
+    parse_mode: options?.parseMode === undefined ? 'HTML' : options.parseMode || undefined,
     reply_markup: replyMarkup || undefined,
     disable_web_page_preview: true
   })

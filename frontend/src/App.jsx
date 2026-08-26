@@ -1,516 +1,81 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from "react";
+import { Link, Navigate, Route, Routes, useParams } from "react-router-dom";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'https://mos-sport.explaingpt.ru/api').replace(/\/$/, '')
-const supportedEventTypes = ['free_play', 'masterclass', 'tournament_60', 'tournament_120', 'tournament_180']
+const apiBaseUrl = (
+  import.meta.env.VITE_API_BASE_URL || "https://mos-sport.explaingpt.ru/api"
+).replace(/\/$/, "");
+const consentDocumentFilename = "81758d52-3d00-45ae-a7ca-ba526f3d45c1.docx";
+const consentDocumentUrl = `${import.meta.env.BASE_URL}${consentDocumentFilename}`;
+const consentClientIdStorageKey = "mosSportConsentClientId";
+const consentAcceptedStorageKey = "mosSportConsentAccepted";
+const supportedEventTypes = [
+  "free_play",
+  "masterclass",
+  "tournament_60",
+  "tournament_120",
+  "tournament_180",
+];
+const eventTypeOrder = [
+  "free_play",
+  "masterclass",
+  "tournament_60",
+  "tournament_120",
+  "tournament_180",
+];
 const eventTypeLabels = {
-  free_play: 'Свободная игра',
-  masterclass: 'Мастер-класс',
-  tournament_60: 'Турнир 60 минут',
-  tournament_120: 'Турнир 120 минут',
-  tournament_180: 'Турнир 180 минут'
-}
-const venueCourtMap = {
-  '12': {
-    title: 'Баррикадная',
+  free_play: "Свободная игра",
+  masterclass: "Мастер-класс",
+  tournament_60: "Турнир 60 минут",
+  tournament_120: "Турнир 120 минут",
+  tournament_180: "Турнир 180 минут",
+};
+const venueCatalog = {
+  12: {
+    id: "12",
+    title: "Баррикадная",
     courts: {
-      '10': 'Корт 1',
-      '11': 'Корт 2'
-    }
+      10: "Корт 1",
+      11: "Корт 2",
+    },
   },
-  '14': {
-    title: 'Третьяковская',
+  14: {
+    id: "14",
+    title: "Третьяковская",
     courts: {
-      '12': 'Корт 1',
-      '13': 'Корт 2'
-    }
+      12: "Корт 1",
+      13: "Корт 2",
+    },
   },
-  '15': {
-    title: 'Римская',
+  15: {
+    id: "15",
+    title: "Римская",
     courts: {
-      '14': 'Корт 1',
-      '15': 'Корт 2'
-    }
-  }
-}
-const openingHourMinutes = 10 * 60
-const closingHourMinutes = 22 * 60
-
-function formatDateToYmd(date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function buildSearchDates(daysCount = 4, startValue) {
-  const dates = []
-  const start = startValue ? new Date(startValue) : new Date()
-  start.setHours(0, 0, 0, 0)
-
-  for (let index = 0; index < daysCount; index += 1) {
-    const nextDate = new Date(start)
-    nextDate.setDate(start.getDate() + index)
-    dates.push(formatDateToYmd(nextDate))
-  }
-
-  return dates
-}
-
-const initialForm = {
-  first_name: '',
-  last_name: '',
-  phone: '',
-  email: '',
-  event_type: 'free_play',
-  venue_id: '12',
-  court_id: '10',
-  date: formatDateToYmd(new Date()),
-  start_time: '10:00',
-  event_id: '',
-  starts_at: '',
-  ends_at: '',
-  duration_minutes: '60',
-  tickets_count: '1',
+      14: "Корт 1",
+      15: "Корт 2",
+    },
+  },
+};
+const initialProfile = {
+  first_name: "",
+  last_name: "",
+  phone: "",
+  email: "",
   privacy_policy_accepted: true,
-  personal_data_accepted: true
-}
-
-const initialResponses = {
-  dateOptions: null,
-  availability: null,
-  session: null,
-  hold: null,
-  smsSend: null,
-  smsVerify: null,
-  confirm: null
-}
-
-const stepMeta = {
-  session: {
-    successTitle: 'Сессия создана',
-    errorTitle: 'Не удалось создать сессию'
-  },
-  hold: {
-    successTitle: 'Слот удержан',
-    errorTitle: 'Не удалось удержать слот'
-  },
-  smsSend: {
-    successTitle: 'SMS отправлено',
-    errorTitle: 'Не удалось отправить SMS'
-  },
-  smsVerify: {
-    successTitle: 'Код подтверждён',
-    errorTitle: 'Не удалось проверить код'
-  },
-  confirm: {
-    successTitle: 'Запись подтверждена',
-    errorTitle: 'Не удалось подтвердить запись'
-  }
-}
-
-function formatRemaining(totalSeconds) {
-  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
-    return '00:00'
-  }
-
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-}
-
-function getFirstErrorMessage(payload) {
-  const data = getResponseData(payload)
-
-  if (Array.isArray(data?.errors) && data.errors[0]?.message) {
-    return String(data.errors[0].message)
-  }
-
-  if (data?.message) {
-    return String(data.message)
-  }
-
-  if (data?.error && data?.message) {
-    return String(data.message)
-  }
-
-  if (typeof data?.raw_text === 'string' && data.raw_text.trim()) {
-    return data.raw_text.trim()
-  }
-
-  if (typeof data === 'string' && data.trim()) {
-    return data.trim()
-  }
-
-  return 'Неизвестная ошибка'
-}
-
-function isSessionExpiredResponse(payload) {
-  const message = getFirstErrorMessage(payload)
-  return message.includes('Registration session is not active') || message.includes('Registration session expired')
-}
-
-function getResponseData(response) {
-  if (!response) {
-    return {}
-  }
-
-  if (response.data !== undefined) {
-    return response.data
-  }
-
-  return response
-}
+  personal_data_accepted: true,
+};
 
 function createUrl(url, query) {
-  const requestUrl = new URL(`${apiBaseUrl}${url}`, window.location.origin)
+  const requestUrl = new URL(`${apiBaseUrl}${url}`, window.location.origin);
 
   Object.entries(query || {}).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') {
-      return
+    if (value === undefined || value === null || value === "") {
+      return;
     }
 
-    requestUrl.searchParams.set(key, value)
-  })
+    requestUrl.searchParams.set(key, value);
+  });
 
-  return requestUrl.toString()
-}
-
-function formatDateHuman(value) {
-  if (!value) {
-    return '—'
-  }
-
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric'
-  }).format(new Date(`${value}T00:00:00`))
-}
-
-function formatDateTimeHuman(value) {
-  if (!value) {
-    return '—'
-  }
-
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(new Date(value))
-}
-
-function formatTimeHuman(value) {
-  if (!value) {
-    return '—'
-  }
-
-  return new Intl.DateTimeFormat('ru-RU', {
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(new Date(value))
-}
-
-function parseTimeToMinutes(value) {
-  if (!value || !value.includes(':')) {
-    return null
-  }
-
-  const [hoursRaw, minutesRaw] = value.split(':')
-  const hours = Number(hoursRaw)
-  const minutes = Number(minutesRaw)
-
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
-    return null
-  }
-
-  return hours * 60 + minutes
-}
-
-function formatMinutesToTime(totalMinutes) {
-  const normalizedMinutes = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60)
-  const hours = Math.floor(normalizedMinutes / 60)
-  const minutes = normalizedMinutes % 60
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-}
-
-function buildIsoDateTime(date, time) {
-  if (!date || !time) {
-    return ''
-  }
-
-  const normalizedTime = time.length === 5 ? `${time}:00` : time
-  return `${date}T${normalizedTime}.000+03:00`
-}
-
-function isMonday(date) {
-  if (!date) {
-    return false
-  }
-
-  return new Date(`${date}T00:00:00`).getDay() === 1
-}
-
-function isScheduleValid(date, startTime, durationMinutes) {
-  const startMinutes = parseTimeToMinutes(startTime)
-  const duration = Number(durationMinutes)
-
-  if (!date || startMinutes === null || !Number.isFinite(duration) || duration <= 0) {
-    return false
-  }
-
-  if (isMonday(date)) {
-    return false
-  }
-
-  const endMinutes = startMinutes + duration
-  return startMinutes >= openingHourMinutes && endMinutes <= closingHourMinutes
-}
-
-function getEventTypeLabel(eventType, fallbackTitle) {
-  return fallbackTitle || eventTypeLabels[eventType] || eventType || '—'
-}
-
-function getCourtVenueId(court) {
-  const venueId = court?.venue_id
-
-  if (venueId && typeof venueId === 'object') {
-    return venueId.id ?? venueId.venue_id ?? venueId.value ?? ''
-  }
-
-  return venueId ?? ''
-}
-
-function getCourtTitleByVenue(venueId, courtId, fallbackTitle) {
-  return venueCourtMap[String(venueId)]?.courts?.[String(courtId)] || fallbackTitle || `Корт ${courtId}`
-}
-
-function normalizeDateOptionCourts(response, venueId) {
-  const payload = getResponseData(response)
-  const courts = Array.isArray(payload?.courts) ? payload.courts : []
-  const serverNow = payload?.server_now || ''
-
-  return courts.map((court) => ({
-    id: court.court_id,
-    title: getCourtTitleByVenue(venueId, court.court_id, court.court_title || `Корт ${court.court_number || court.court_id}`),
-    name: getCourtTitleByVenue(venueId, court.court_id, court.court_title || `Корт ${court.court_number || court.court_id}`),
-    venue_id: venueId,
-    has_bookable_slots: Boolean(court.has_bookable_slots),
-    available_dates: Array.isArray(court.available_dates) ? court.available_dates : [],
-    available_events: Array.isArray(court.available_events) ? court.available_events : [],
-    server_now: serverNow
-  }))
-}
-
-function buildDateOptionsResponseSummary(results, venueId) {
-  return {
-    venue_id: venueId,
-    event_types: results.map((result) => ({
-      event_type: result.event_type,
-      label: getEventTypeLabel(result.event_type),
-      httpStatus: result.httpStatus,
-      payload: getResponseData(result)
-    }))
-  }
-}
-
-function buildAvailabilityResponseSummary(results, venueId, dates, ticketsCount) {
-  return {
-    venue_id: venueId,
-    dates,
-    tickets_count: ticketsCount,
-    requests: results.map((result) => ({
-      date: result.date,
-      event_type: result.event_type,
-      court_id: result.court_id,
-      court_title: result.court_title,
-      httpStatus: result.httpStatus,
-      payload: getResponseData(result)
-    }))
-  }
-}
-
-function extractDirectusItems(response) {
-  const payload = getResponseData(response)
-
-  if (Array.isArray(payload?.data)) {
-    return payload.data
-  }
-
-  if (Array.isArray(payload)) {
-    return payload
-  }
-
-  if (Array.isArray(payload?.items)) {
-    return payload.items
-  }
-
-  return []
-}
-
-function extractAvailabilityEvents(response) {
-  const payload = getResponseData(response)
-
-  if (Array.isArray(payload?.events)) {
-    return payload.events
-  }
-
-  if (Array.isArray(payload?.data?.events)) {
-    return payload.data.events
-  }
-
-  return []
-}
-
-function buildSlots(events, context = {}) {
-  return events.flatMap((event) =>
-    (event.starts || []).flatMap((start) => {
-      const startsAt = start.starts_at
-      const durationOptions = Object.entries(start.durations || {})
-        .map(([durationKey, durationValue]) => {
-          const durationMinutes = Number(durationKey)
-          const endMinutes =
-            parseTimeToMinutes(formatTimeHuman(startsAt)) !== null
-              ? parseTimeToMinutes(formatTimeHuman(startsAt)) + durationMinutes
-              : null
-
-          return {
-            key: `${durationMinutes}`,
-            duration_minutes: durationMinutes,
-            ends_at:
-              durationValue?.ends_at ||
-              (startsAt && endMinutes !== null
-                ? buildIsoDateTime(startsAt.slice(0, 10), formatMinutesToTime(endMinutes))
-                : ''),
-            available_tickets: Number(durationValue?.available_tickets) || 0,
-            enabled: durationValue?.enabled,
-            booking_open: durationValue?.booking_open
-          }
-        })
-        .filter((durationOption) => durationOption.available_tickets > 0 && durationOption.booking_open === true)
-        .sort((left, right) => left.duration_minutes - right.duration_minutes)
-
-      if (!durationOptions.length) {
-        return []
-      }
-
-      return {
-        key: [context.event_type || event.event_type || 'free_play', context.court_id || 'court', event.id, startsAt].join(':'),
-        event_id: event.id,
-        starts_at: startsAt,
-        tickets_count: 1,
-        court_id: String(context.court_id || ''),
-        court_title: getCourtTitleByVenue(context.venue_id, context.court_id, context.court_title || `Корт ${context.court_id || ''}`.trim()),
-        venue_id: String(context.venue_id || ''),
-        event_title: getEventTypeLabel(context.event_type || event.event_type, event.title),
-        event_type: context.event_type || event.event_type || 'free_play',
-        max_available_tickets: Math.max(...durationOptions.map((item) => item.available_tickets)),
-        duration_options: durationOptions
-      }
-    })
-  )
-}
-
-function buildSlotsFromDateOptions(courts, context = {}) {
-  const allowedDates = new Set(context.search_dates || [])
-
-  return courts.flatMap((court) =>
-    (court.available_events || []).flatMap((event) => {
-      const eventDate = event.event_date || (event.starts_at ? event.starts_at.slice(0, 10) : '')
-
-      if (allowedDates.size && eventDate && !allowedDates.has(eventDate)) {
-        return []
-      }
-
-      const durationOptions = (event.available_slots || [])
-        .map((slot) => {
-          const bookingOpensAt = slot.booking_opens_at || ''
-          const bookingOpen =
-            bookingOpensAt && court.server_now ? new Date(court.server_now).getTime() >= new Date(bookingOpensAt).getTime() : true
-
-          return {
-            key: `${slot.duration_minutes}`,
-            duration_minutes: Number(slot.duration_minutes),
-            ends_at: slot.ends_at || event.ends_at || '',
-            available_tickets: Number(slot.available_tickets ?? slot.raw_available_tickets) || 0,
-            booking_opens_at: bookingOpensAt,
-            enabled: null,
-            booking_open: bookingOpen
-          }
-        })
-        .filter((durationOption) => durationOption.available_tickets > 0 && durationOption.booking_open === true)
-        .sort((left, right) => left.duration_minutes - right.duration_minutes)
-
-      if (!durationOptions.length) {
-        return []
-      }
-
-      const startsAt = event.starts_at || event.available_slots?.[0]?.starts_at || ''
-
-      return {
-        key: [context.event_type || event.event_type || 'free_play', court.id, event.event_id || event.id, startsAt].join(':'),
-        event_id: event.event_id || event.id,
-        starts_at: startsAt,
-        tickets_count: 1,
-        court_id: String(court.id || event.court_id || ''),
-        court_title: getCourtTitleByVenue(context.venue_id, court.id || event.court_id || '', court.title || court.name || `Корт ${court.id || event.court_id || ''}`.trim()),
-        venue_id: String(context.venue_id || event.venue_id || ''),
-        event_title: getEventTypeLabel(context.event_type || event.event_type, event.title),
-        event_type: context.event_type || event.event_type || 'free_play',
-        max_available_tickets: Math.max(...durationOptions.map((item) => item.available_tickets)),
-        duration_options: durationOptions
-      }
-    })
-  )
-}
-
-function mergeSlots(slots) {
-  const slotsMap = new Map()
-
-  slots.forEach((slot) => {
-    const slotKey = [slot.event_type, slot.court_id, slot.event_id, slot.starts_at].join(':')
-    const existingSlot = slotsMap.get(slotKey)
-
-    if (!existingSlot) {
-      slotsMap.set(slotKey, {
-        ...slot,
-        duration_options: [...slot.duration_options]
-      })
-      return
-    }
-
-    const durationMap = new Map(
-      existingSlot.duration_options.map((durationOption) => [String(durationOption.duration_minutes), durationOption])
-    )
-
-    slot.duration_options.forEach((durationOption) => {
-      const currentOption = durationMap.get(String(durationOption.duration_minutes))
-
-      if (!currentOption || Number(durationOption.available_tickets) > Number(currentOption.available_tickets)) {
-        durationMap.set(String(durationOption.duration_minutes), durationOption)
-      }
-    })
-
-    const mergedDurationOptions = Array.from(durationMap.values()).sort(
-      (left, right) => left.duration_minutes - right.duration_minutes
-    )
-
-    slotsMap.set(slotKey, {
-      ...existingSlot,
-      ...slot,
-      max_available_tickets: Math.max(...mergedDurationOptions.map((item) => Number(item.available_tickets) || 0)),
-      duration_options: mergedDurationOptions
-    })
-  })
-
-  return Array.from(slotsMap.values())
-}
-
-function formatSlotLabel(slot) {
-  const availableTickets = slot.max_available_tickets ? ` • до ${slot.max_available_tickets} мест` : ''
-  return `${slot.event_title} • ${slot.court_title} • ${formatDateHuman(slot.starts_at.slice(0, 10))} • ${formatTimeHuman(slot.starts_at)}${availableTickets}`
+  return requestUrl.toString();
 }
 
 async function requestJson(url, method, body, query) {
@@ -518,459 +83,603 @@ async function requestJson(url, method, body, query) {
     const response = await fetch(createUrl(url, query), {
       method,
       headers: {
-        'Content-Type': 'application/json'
+        "Content-Type": "application/json",
       },
-      body: body === undefined ? undefined : JSON.stringify(body)
-    })
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
 
-    const contentType = response.headers.get('content-type') || ''
+    const contentType = response.headers.get("content-type") || "";
 
-    if (contentType.includes('application/json')) {
-      const json = await response.json()
+    if (contentType.includes("application/json")) {
+      const json = await response.json();
       return {
         httpStatus: response.status,
-        ...json
-      }
+        ...json,
+      };
     }
 
-    const rawText = await response.text()
+    const rawText = await response.text();
     return {
       httpStatus: response.status,
       status: response.status,
       data: {
-        raw_text: rawText
-      }
-    }
+        raw_text: rawText,
+      },
+    };
   } catch (error) {
     return {
       httpStatus: 502,
       status: 502,
       data: {
-        error: 'fetch_failed',
-        message: error instanceof Error ? error.message : 'Неизвестная ошибка сети'
-      }
-    }
+        error: "fetch_failed",
+        message:
+          error instanceof Error ? error.message : "Неизвестная ошибка сети",
+      },
+    };
   }
 }
 
-export default function App() {
-  const [form, setForm] = useState(initialForm)
-  const [searchDates, setSearchDates] = useState(() => buildSearchDates(4))
-  const [manualMode, setManualMode] = useState(false)
-  const [manualCourtMode, setManualCourtMode] = useState(false)
-  const [venues, setVenues] = useState([])
-  const [dateOptionsCatalog, setDateOptionsCatalog] = useState({})
-  const [slots, setSlots] = useState([])
-  const [selectedSlotKey, setSelectedSlotKey] = useState('')
-  const [selectedSlot, setSelectedSlot] = useState(null)
-  const [lookupStatus, setLookupStatus] = useState({
-    venues: 'idle',
-    dateOptions: 'idle',
-    slots: 'idle'
-  })
-  const [sessionId, setSessionId] = useState('')
-  const [holdId, setHoldId] = useState('')
-  const [expiresAt, setExpiresAt] = useState('')
-  const [availableBeforeHold, setAvailableBeforeHold] = useState(null)
-  const [availableAfterHold, setAvailableAfterHold] = useState(null)
-  const [responses, setResponses] = useState(initialResponses)
-  const [smsCode, setSmsCode] = useState('')
-  const [verified, setVerified] = useState(false)
-  const [toasts, setToasts] = useState([])
-  const [smsCooldownUntil, setSmsCooldownUntil] = useState(null)
-  const [now, setNow] = useState(Date.now())
-  const [loadingStep, setLoadingStep] = useState('')
+async function requestConsent(method, body, query) {
+  const primary = await requestJson("/consent", method, body, query);
 
-  const venueMap = useMemo(
-    () =>
-      new Map(
-        venues.map((venue) => [
-          String(venue.id),
-          `${venue.title || 'Без названия'}, ${venue.address || 'адрес не указан'}`
-        ])
+  if (primary.httpStatus !== 404) {
+    return primary;
+  }
+
+  return requestJson("/consent-status", method, body, query);
+}
+
+function getResponseData(response) {
+  if (!response) {
+    return {};
+  }
+
+  if (response.data !== undefined) {
+    return response.data;
+  }
+
+  return response;
+}
+
+function getFirstErrorMessage(payload) {
+  const data = getResponseData(payload);
+
+  if (Array.isArray(data?.errors) && data.errors[0]?.message) {
+    return String(data.errors[0].message);
+  }
+
+  if (data?.message) {
+    return String(data.message);
+  }
+
+  if (typeof data?.raw_text === "string" && data.raw_text.trim()) {
+    return data.raw_text.trim();
+  }
+
+  if (typeof data === "string" && data.trim()) {
+    return data.trim();
+  }
+
+  return "Неизвестная ошибка";
+}
+
+function isSessionExpiredResponse(payload) {
+  const message = getFirstErrorMessage(payload);
+  return (
+    message.includes("Registration session is not active") ||
+    message.includes("Registration session expired")
+  );
+}
+
+function getEventTypeLabel(eventType, fallbackTitle) {
+  return fallbackTitle || eventTypeLabels[eventType] || eventType || "—";
+}
+
+function getVenueTitle(venueId) {
+  return venueCatalog[String(venueId)]?.title || `Площадка ${venueId}`;
+}
+
+function getCourtTitle(venueId, courtId, fallbackTitle) {
+  return (
+    venueCatalog[String(venueId)]?.courts?.[String(courtId)] ||
+    fallbackTitle ||
+    `Корт ${courtId}`
+  );
+}
+
+function formatDateToYmd(dateValue) {
+  const date = new Date(dateValue);
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  return formatter.format(date);
+}
+
+function buildSearchDates(daysCount = 4, startValue = Date.now()) {
+  const dates = [];
+  const baseDate = new Date(startValue);
+
+  for (let index = 0; index < daysCount; index += 1) {
+    const nextDate = new Date(baseDate);
+    nextDate.setDate(baseDate.getDate() + index);
+    dates.push(formatDateToYmd(nextDate));
+  }
+
+  return dates;
+}
+
+function formatDateHuman(dateString) {
+  if (!dateString) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    weekday: "short",
+    day: "numeric",
+    month: "long",
+  }).format(new Date(`${dateString}T00:00:00+03:00`));
+}
+
+function formatDateTimeHuman(value) {
+  if (!value) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatTimeHuman(value) {
+  if (!value) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatRemaining(totalSeconds) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return "00:00";
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getMoscowClock(dateValue = Date.now()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const parts = formatter.formatToParts(new Date(dateValue));
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  const hours = Number(values.hour || 0);
+
+  return {
+    date: `${values.year}-${values.month}-${values.day}`,
+    floorMinutes: hours * 60,
+  };
+}
+
+function parseTimeToMinutes(time) {
+  if (!time || !time.includes(":")) {
+    return null;
+  }
+
+  const [hoursRaw, minutesRaw] = time.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+}
+
+function isPastSlot(slot, nowValue) {
+  if (!slot?.starts_at) {
+    return false;
+  }
+
+  const moscowNow = getMoscowClock(nowValue);
+  const slotDate = slot.starts_at.slice(0, 10);
+  const slotMinutes = parseTimeToMinutes(slot.starts_at.slice(11, 16));
+
+  if (slotDate !== moscowNow.date || slotMinutes === null) {
+    return false;
+  }
+
+  return slotMinutes < moscowNow.floorMinutes;
+}
+
+function toPositiveNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function buildSlotKey(slot) {
+  return [
+    slot.event_type,
+    slot.venue_id,
+    slot.court_id,
+    slot.event_id,
+    slot.starts_at,
+    slot.duration_minutes,
+  ].join(":");
+}
+
+function normalizeSlot(eventType, venueId, court, event, slot, serverNow) {
+  const startsAt = slot?.starts_at || event?.starts_at || "";
+  const endsAt = slot?.ends_at || event?.ends_at || "";
+  const availableTickets =
+    Number(slot?.available_tickets ?? slot?.raw_available_tickets ?? 0) || 0;
+  const bookingOpen =
+    slot?.booking_open === true ||
+    !slot?.booking_opens_at ||
+    !serverNow ||
+    new Date(serverNow).getTime() >= new Date(slot.booking_opens_at).getTime();
+
+  if (!startsAt || !endsAt || availableTickets <= 0) {
+    return null;
+  }
+
+  const normalizedSlot = {
+    event_type: eventType,
+    event_title: getEventTypeLabel(eventType, event.title),
+    event_description: event.description || "",
+    event_capacity: Number(event.capacity || 0) || 0,
+    venue_id: String(venueId),
+    venue_title: getVenueTitle(venueId),
+    court_id: String(court.court_id),
+    court_title: getCourtTitle(
+      venueId,
+      court.court_id,
+      court.court_title || `Корт ${court.court_number || court.court_id}`,
+    ),
+    event_id: event.event_id || event.id,
+    starts_at: startsAt,
+    ends_at: endsAt,
+    date: startsAt.slice(0, 10),
+    time: slot.time || startsAt.slice(11, 16),
+    duration_minutes: Number(slot.duration_minutes) || 0,
+    available_tickets: availableTickets,
+    raw_available_tickets:
+      Number(slot?.raw_available_tickets ?? availableTickets) ||
+      availableTickets,
+    booking_opens_at: slot?.booking_opens_at || "",
+    booking_open: bookingOpen === null ? false : Boolean(bookingOpen),
+    enabled: null,
+  };
+
+  return {
+    ...normalizedSlot,
+    key: buildSlotKey(normalizedSlot),
+  };
+}
+
+function extractSlotsFromDateOptions(response, venueId) {
+  const payload = getResponseData(response);
+  const eventType = payload?.event_type || response.event_type;
+  const courts = Array.isArray(payload?.courts) ? payload.courts : [];
+  const serverNow = payload?.server_now || "";
+
+  return courts.flatMap((court) =>
+    (court.available_events || []).flatMap((event) =>
+      (event.available_slots || [])
+        .map((slot) =>
+          normalizeSlot(eventType, venueId, court, event, slot, serverNow),
+        )
+        .filter(Boolean),
+    ),
+  );
+}
+
+function extractSlotsFromAvailability(response, context) {
+  const payload = getResponseData(response);
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+
+  return events
+    .flatMap((event) =>
+      (event.starts || []).flatMap((start) =>
+        Object.entries(start.durations || {}).map(
+          ([durationKey, durationValue]) => {
+            const availableTickets =
+              Number(
+                durationValue?.available_tickets ??
+                  durationValue?.raw_available_tickets ??
+                  0,
+              ) || 0;
+
+            if (availableTickets <= 0) {
+              return null;
+            }
+
+            const normalizedSlot = {
+              event_type: event.event_type || context.event_type,
+              event_title: getEventTypeLabel(
+                event.event_type || context.event_type,
+                event.title,
+              ),
+              event_description: event.description || "",
+              event_capacity: Number(event.capacity || 0) || 0,
+              venue_id: String(context.venue_id),
+              venue_title: getVenueTitle(context.venue_id),
+              court_id: String(context.court_id),
+              court_title: getCourtTitle(context.venue_id, context.court_id),
+              event_id: Number(event.event_id || event.id || 0),
+              starts_at: start.starts_at || "",
+              ends_at: durationValue?.ends_at || "",
+              date: String(context.date),
+              time: start.time || String(start.starts_at || "").slice(11, 16),
+              duration_minutes: Number(durationKey),
+              available_tickets: availableTickets,
+              raw_available_tickets:
+                Number(
+                  durationValue?.raw_available_tickets ?? availableTickets,
+                ) || availableTickets,
+              booking_opens_at: "",
+              booking_open:
+                durationValue?.booking_open === undefined
+                  ? false
+                  : Boolean(durationValue.booking_open),
+              enabled:
+                durationValue?.enabled === undefined
+                  ? null
+                  : Boolean(durationValue.enabled),
+            };
+
+            return {
+              ...normalizedSlot,
+              key: buildSlotKey(normalizedSlot),
+            };
+          },
+        ),
       ),
-    [venues]
-  )
-
-  const requestedTickets = Math.max(1, Number(form.tickets_count) || 1)
-
-  const eventTypeOptions = useMemo(() => {
-    const grouped = new Map()
-
-    slots
-      .filter((slot) => Number(slot.max_available_tickets) >= requestedTickets)
-      .forEach((slot) => {
-      const key = String(slot.event_type)
-      const current = grouped.get(key)
-
-      if (!current) {
-        grouped.set(key, {
-          value: key,
-          label: getEventTypeLabel(key),
-          slotsCount: 1
-        })
-        return
-      }
-
-      grouped.set(key, {
-        ...current,
-        slotsCount: current.slotsCount + 1
-      })
-    })
-
-    return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, 'ru'))
-  }, [requestedTickets, slots])
-
-  const availableDateOptions = useMemo(() => {
-    const grouped = new Map()
-
-    slots
-      .filter((slot) => Number(slot.max_available_tickets) >= requestedTickets)
-      .filter((slot) => !form.event_type || String(slot.event_type) === String(form.event_type))
-      .forEach((slot) => {
-        const dateValue = slot.starts_at?.slice(0, 10)
-        if (!dateValue) {
-          return
-        }
-
-        const current = grouped.get(dateValue)
-        grouped.set(dateValue, {
-          value: dateValue,
-          label: formatDateHuman(dateValue),
-          slotsCount: (current?.slotsCount || 0) + 1
-        })
-      })
-
-    return Array.from(grouped.values()).sort((left, right) => left.value.localeCompare(right.value))
-  }, [form.event_type, requestedTickets, slots])
-
-  const availableCourts = useMemo(() => {
-    const grouped = new Map()
-
-    slots
-      .filter((slot) => Number(slot.max_available_tickets) >= requestedTickets)
-      .filter((slot) => !form.event_type || String(slot.event_type) === String(form.event_type))
-      .filter((slot) => !form.date || slot.starts_at?.slice(0, 10) === String(form.date))
-      .forEach((slot) => {
-        const key = String(slot.court_id)
-        const current = grouped.get(key)
-
-        grouped.set(key, {
-          id: key,
-          title: slot.court_title || `Корт ${key}`,
-          name: slot.court_title || `Корт ${key}`,
-          slotsCount: (current?.slotsCount || 0) + 1
-        })
-      })
-
-    return Array.from(grouped.values()).sort((left, right) => left.title.localeCompare(right.title, 'ru'))
-  }, [form.date, form.event_type, requestedTickets, slots])
-
-  const slotsMatchingFiltersWithoutTickets = useMemo(
-    () =>
-      slots.filter((slot) => {
-        if (form.event_type && String(slot.event_type) !== String(form.event_type)) {
-          return false
-        }
-
-        if (form.date && slot.starts_at?.slice(0, 10) !== String(form.date)) {
-          return false
-        }
-
-        if (form.court_id && String(slot.court_id) !== String(form.court_id)) {
-          return false
-        }
-
-        return true
-      }),
-    [form.court_id, form.date, form.event_type, slots]
-  )
-
-  const availableTicketsMax = useMemo(() => {
-    if (!slotsMatchingFiltersWithoutTickets.length) {
-      return 1
-    }
-
-    return Math.max(...slotsMatchingFiltersWithoutTickets.map((slot) => Number(slot.max_available_tickets) || 1))
-  }, [slotsMatchingFiltersWithoutTickets])
-
-  const selectedDurationTicketsMax = useMemo(() => {
-    if (!selectedSlot) {
-      return availableTicketsMax
-    }
-
-    const matchedDuration = selectedSlot.duration_options.find(
-      (item) => String(item.duration_minutes) === String(form.duration_minutes)
     )
+    .filter(Boolean);
+}
 
-    if (matchedDuration) {
-      return Math.max(1, Number(matchedDuration.available_tickets) || 1)
+function mergeSlotsByStatus(baseSlots, availabilitySlots) {
+  const slotMap = new Map(baseSlots.map((slot) => [slot.key, { ...slot }]));
+
+  availabilitySlots.forEach((slot) => {
+    const current = slotMap.get(slot.key);
+
+    if (!current) {
+      slotMap.set(slot.key, { ...slot });
+      return;
     }
 
-    return Math.max(1, Number(selectedSlot.max_available_tickets) || 1)
-  }, [availableTicketsMax, form.duration_minutes, selectedSlot])
-
-  const visibleSlots = useMemo(
-    () =>
-      slotsMatchingFiltersWithoutTickets.filter((slot) => Number(slot.max_available_tickets) >= requestedTickets),
-    [requestedTickets, slotsMatchingFiltersWithoutTickets]
-  )
-
-  const courtMap = useMemo(
-    () =>
-      new Map(
-        Object.values(dateOptionsCatalog)
-          .flatMap((item) => item.courts || [])
-          .map((court) => [
-          String(court.id),
-          court.title || court.name || `Корт ${court.id}`
-        ])
+    slotMap.set(slot.key, {
+      ...current,
+      event_description: slot.event_description || current.event_description,
+      event_capacity:
+        Number(slot.event_capacity) || Number(current.event_capacity) || 0,
+      available_tickets: Math.max(
+        Number(current.available_tickets) || 0,
+        Number(slot.available_tickets) || 0,
       ),
-    [dateOptionsCatalog]
-  )
+      raw_available_tickets: Math.max(
+        Number(current.raw_available_tickets) || 0,
+        Number(slot.raw_available_tickets) || 0,
+      ),
+      booking_open: slot.booking_open,
+      enabled: slot.enabled ?? current.enabled,
+    });
+  });
 
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setNow(Date.now())
-    }, 1000)
+  return sortSlots(Array.from(slotMap.values()));
+}
 
-    return () => window.clearInterval(interval)
-  }, [])
-
-  useEffect(() => {
-    loadVenues()
-  }, [])
-
-  useEffect(() => {
-    if (!form.venue_id) {
-      return
+function sortSlots(slots) {
+  return [...slots].sort((left, right) => {
+    const eventTypeDiff =
+      eventTypeOrder.indexOf(left.event_type) -
+      eventTypeOrder.indexOf(right.event_type);
+    if (eventTypeDiff !== 0) {
+      return eventTypeDiff;
     }
 
-    loadDateOptions()
-  }, [form.venue_id])
-
-  useEffect(() => {
-    if (manualMode) {
-      return
+    const dateDiff = left.date.localeCompare(right.date);
+    if (dateDiff !== 0) {
+      return dateDiff;
     }
 
-    if (!form.venue_id || !Object.keys(dateOptionsCatalog).length) {
-      return
+    const courtDiff = left.court_title.localeCompare(right.court_title, "ru");
+    if (courtDiff !== 0) {
+      return courtDiff;
     }
 
-    loadAvailability()
-  }, [manualMode, form.venue_id, form.tickets_count, dateOptionsCatalog, searchDates])
-
-  useEffect(() => {
-    if (!selectedSlotKey) {
-      setSelectedSlot(null)
-      return
+    const timeDiff = left.time.localeCompare(right.time);
+    if (timeDiff !== 0) {
+      return timeDiff;
     }
 
-    const slot = visibleSlots.find((item) => item.key === selectedSlotKey) || null
-    setSelectedSlot(slot)
+    return left.duration_minutes - right.duration_minutes;
+  });
+}
 
-    if (!slot) {
-      return
-    }
+function getSlotVisualStatus(slot) {
+  return slot.booking_open === true && slot.enabled === false
+    ? "disabled"
+    : "ready";
+}
 
-    const selectedDuration =
-      slot.duration_options.find((item) => String(item.duration_minutes) === String(form.duration_minutes)) ||
-      slot.duration_options[0]
-
-    setForm((current) => ({
-      ...current,
-      date: slot.starts_at ? slot.starts_at.slice(0, 10) : current.date,
-      event_id: String(slot.event_id),
-      starts_at: slot.starts_at,
-      ends_at: selectedDuration?.ends_at || '',
-      start_time: formatTimeHuman(slot.starts_at),
-      duration_minutes: selectedDuration ? String(selectedDuration.duration_minutes) : current.duration_minutes,
-      event_type: slot.event_type || current.event_type,
-      court_id: slot.court_id || current.court_id
-    }))
-  }, [form.duration_minutes, selectedSlotKey, visibleSlots])
-
-  useEffect(() => {
-    if (manualMode || !selectedSlot) {
-      return
-    }
-
-    const selectedDuration =
-      selectedSlot.duration_options.find(
-        (item) =>
-          String(item.duration_minutes) === String(form.duration_minutes) &&
-          Number(item.available_tickets) >= Math.max(1, Number(form.tickets_count) || 1)
-      ) ||
-      selectedSlot.duration_options.find(
-        (item) => Number(item.available_tickets) >= Math.max(1, Number(form.tickets_count) || 1)
-      ) ||
-      null
-
-    if (!selectedDuration) {
-      return
-    }
-
-    setForm((current) => ({
-      ...current,
-      ends_at: selectedDuration.ends_at
-    }))
-  }, [form.duration_minutes, manualMode, selectedSlot])
-
-  useEffect(() => {
-    if (manualMode) {
-      return
-    }
-
-    const currentTickets = Math.max(1, Number(form.tickets_count) || 1)
-    const nextTickets = Math.min(currentTickets, selectedDurationTicketsMax)
-
-    if (currentTickets === nextTickets) {
-      return
-    }
-
-    setForm((current) => ({
-      ...current,
-      tickets_count: String(nextTickets)
-    }))
-  }, [form.tickets_count, manualMode, selectedDurationTicketsMax])
-
-  useEffect(() => {
-    if (manualMode || manualCourtMode) {
-      return
-    }
-
-    if (!availableCourts.length) {
-      if (form.court_id) {
-        setForm((current) => ({
-          ...current,
-          court_id: ''
-        }))
-      }
-      return
-    }
-
-    if (!availableCourts.some((court) => String(court.id) === String(form.court_id))) {
-      setForm((current) => ({
-        ...current,
-        court_id: String(availableCourts[0].id)
-      }))
-    }
-  }, [availableCourts, form.court_id, manualCourtMode, manualMode])
-
-  useEffect(() => {
-    if (manualMode) {
-      return
-    }
-
-    if (eventTypeOptions.some((option) => option.value === form.event_type)) {
-      return
-    }
-
-    if (!eventTypeOptions.length) {
-      if (form.event_type) {
-        setForm((current) => ({
-          ...current,
-          event_type: ''
-        }))
-      }
-      return
-    }
-
-    setForm((current) => ({
-      ...current,
-      event_type: eventTypeOptions[0].value
-    }))
-  }, [eventTypeOptions, form.event_type, manualMode])
-
-  useEffect(() => {
-    if (manualMode) {
-      return
-    }
-
-    if (availableDateOptions.some((option) => option.value === form.date)) {
-      return
-    }
-
-    if (!availableDateOptions.length) {
-      if (form.date) {
-        setForm((current) => ({
-          ...current,
-          date: ''
-        }))
-      }
-      return
-    }
-
-    setForm((current) => ({
-      ...current,
-      date: availableDateOptions[0].value
-    }))
-  }, [availableDateOptions, form.date, manualMode])
-
-  useEffect(() => {
-    if (!manualMode) {
-      return
-    }
-
-    const startsAt = buildIsoDateTime(form.date, form.start_time)
-    const startMinutes = parseTimeToMinutes(form.start_time)
-    const duration = Number(form.duration_minutes)
-    const endsAt =
-      startMinutes === null || !Number.isFinite(duration) || duration <= 0
-        ? ''
-        : buildIsoDateTime(form.date, formatMinutesToTime(startMinutes + duration))
-
-    setForm((current) => {
-      if (current.starts_at === startsAt && current.ends_at === endsAt) {
-        return current
-      }
+async function loadVenueSlotsForNextDays(venueId) {
+  const results = await Promise.all(
+    supportedEventTypes.map(async (eventType) => {
+      const response = await requestJson("/date-options", "GET", undefined, {
+        event_type: eventType,
+        venue_id: venueId,
+      });
 
       return {
-        ...current,
-        starts_at: startsAt,
-        ends_at: endsAt
-      }
-    })
-  }, [form.date, form.duration_minutes, form.start_time, manualMode])
+        ...response,
+        event_type: eventType,
+      };
+    }),
+  );
 
-  useEffect(() => {
-    if (manualMode) {
-      return
+  const successfulResponses = results.filter(
+    (response) => response.httpStatus < 400,
+  );
+  const serverNow =
+    successfulResponses
+      .map((response) => getResponseData(response))
+      .find((payload) => payload?.server_now)?.server_now ||
+    new Date().toISOString();
+
+  const searchDates = buildSearchDates(4, serverNow);
+  const searchDatesSet = new Set(searchDates);
+
+  const baseSlots = sortSlots(
+    successfulResponses
+      .flatMap((response) => extractSlotsFromDateOptions(response, venueId))
+      .filter((slot) => searchDatesSet.has(slot.date)),
+  );
+
+  const venueCourtIds = Object.keys(
+    venueCatalog[String(venueId)]?.courts || {},
+  );
+  const availabilityQueries = searchDates.flatMap((date) =>
+    supportedEventTypes.flatMap((eventType) =>
+      venueCourtIds.map((court_id) => ({
+        event_type: eventType,
+        venue_id: String(venueId),
+        court_id: String(court_id),
+        date,
+      })),
+    ),
+  );
+
+  const availabilityResponses = await Promise.all(
+    availabilityQueries.map(async (query) => {
+      const response = await requestJson(
+        "/availability",
+        "GET",
+        undefined,
+        query,
+      );
+      return {
+        ...response,
+        context: query,
+      };
+    }),
+  );
+
+  const availabilitySlots = availabilityResponses
+    .filter((response) => response.httpStatus < 400)
+    .flatMap((response) =>
+      extractSlotsFromAvailability(response, response.context),
+    );
+
+  return {
+    serverNow,
+    slots: mergeSlotsByStatus(baseSlots, availabilitySlots).filter(
+      (slot) => searchDatesSet.has(slot.date) && slot.booking_open === true,
+    ),
+    hasSuccess:
+      successfulResponses.length > 0 ||
+      availabilityResponses.some((response) => response.httpStatus < 400),
+  };
+}
+
+function buildVenueSections(slots) {
+  const eventTypeMap = new Map();
+
+  slots.forEach((slot) => {
+    if (!eventTypeMap.has(slot.event_type)) {
+      eventTypeMap.set(slot.event_type, {
+      eventType: slot.event_type,
+      title: getEventTypeLabel(slot.event_type, slot.event_title),
+      description: slot.event_description || "",
+      capacity: Number(slot.event_capacity) || 0,
+      datesMap: new Map(),
+    });
     }
 
-    if (!visibleSlots.length) {
-      setSelectedSlotKey('')
-      return
+    const eventTypeGroup = eventTypeMap.get(slot.event_type);
+
+    if (!eventTypeGroup.datesMap.has(slot.date)) {
+      eventTypeGroup.datesMap.set(slot.date, {
+        date: slot.date,
+        label: formatDateHuman(slot.date),
+        courtsMap: new Map(),
+      });
     }
 
-    setSelectedSlotKey((current) => (visibleSlots.some((slot) => slot.key === current) ? current : visibleSlots[0].key))
-  }, [manualMode, visibleSlots])
+    const dateGroup = eventTypeGroup.datesMap.get(slot.date);
 
-  const expiresInSeconds = useMemo(() => {
-    if (!expiresAt) {
-      return null
+    if (!dateGroup.courtsMap.has(slot.court_id)) {
+      dateGroup.courtsMap.set(slot.court_id, {
+        courtId: slot.court_id,
+        courtTitle: slot.court_title,
+        slots: [],
+      });
     }
 
-    const diffMs = new Date(expiresAt).getTime() - now
-    return Math.max(0, Math.floor(diffMs / 1000))
-  }, [expiresAt, now])
+    dateGroup.courtsMap.get(slot.court_id).slots.push(slot);
+  });
 
-  const smsRetryInSeconds = useMemo(() => {
-    if (!smsCooldownUntil) {
-      return 0
-    }
+  return eventTypeOrder
+    .filter((eventType) => eventTypeMap.has(eventType))
+    .map((eventType) => {
+      const eventTypeGroup = eventTypeMap.get(eventType);
+      return {
+        eventType,
+        title: eventTypeGroup.title,
+        description: eventTypeGroup.description,
+        capacity: eventTypeGroup.capacity,
+        dates: Array.from(eventTypeGroup.datesMap.values())
+          .sort((left, right) => left.date.localeCompare(right.date))
+          .map((dateGroup) => ({
+            date: dateGroup.date,
+            label: dateGroup.label,
+            courts: Array.from(dateGroup.courtsMap.values()).sort(
+              (left, right) =>
+                left.courtTitle.localeCompare(right.courtTitle, "ru"),
+            ),
+          })),
+      };
+    });
+}
 
-    return Math.max(0, Math.ceil((smsCooldownUntil - now) / 1000))
-  }, [smsCooldownUntil, now])
+function useToasts() {
+  const [toasts, setToasts] = useState([]);
 
   function removeToast(id) {
-    setToasts((current) => current.filter((toast) => toast.id !== id))
+    setToasts((current) => current.filter((toast) => toast.id !== id));
   }
 
   function pushToast(type, title, message, code) {
-    const id = `${Date.now()}:${Math.random()}`
-    const duration = type === 'success' ? 2000 : 4000
+    const id = `${Date.now()}:${Math.random()}`;
+    const duration = type === "success" ? 2000 : 4000;
 
     setToasts((current) => [
       ...current,
@@ -979,811 +688,871 @@ export default function App() {
         type,
         title,
         message,
-        code
-      }
-    ])
+        code,
+      },
+    ]);
 
     window.setTimeout(() => {
-      removeToast(id)
-    }, duration)
+      removeToast(id);
+    }, duration);
   }
 
-  function updateForm(event) {
-    const { name, value, type, checked } = event.target
-    setForm((current) => ({
-      ...current,
-      [name]: type === 'checkbox' ? checked : value
-    }))
+  return {
+    toasts,
+    pushToast,
+    removeToast,
+  };
+}
+
+function ensureConsentClientId() {
+  const existingId = window.localStorage.getItem(consentClientIdStorageKey);
+  if (existingId) {
+    return existingId;
   }
 
-  async function loadVenues() {
-    setLookupStatus((current) => ({ ...current, venues: 'loading' }))
+  const nextId =
+    window.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  window.localStorage.setItem(consentClientIdStorageKey, nextId);
+  return nextId;
+}
 
-    const response = await requestJson('/venues', 'GET')
-    const items = extractDirectusItems(response)
-    setVenues(items)
-    setLookupStatus((current) => ({ ...current, venues: response.httpStatus < 400 ? 'success' : 'error' }))
-  }
+function useConsentGate(pushToast) {
+  const [status, setStatus] = useState("loading");
+  const [messageMode, setMessageMode] = useState("initial");
+  const [clientId, setClientId] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  async function loadDateOptions() {
-    setLookupStatus((current) => ({ ...current, dateOptions: 'loading' }))
-    setDateOptionsCatalog({})
+  useEffect(() => {
+    const nextClientId = ensureConsentClientId();
+    setClientId(nextClientId);
 
-    const results = await Promise.all(
-      supportedEventTypes.map(async (eventType) => {
-        const response = await requestJson('/date-options', 'GET', undefined, {
-          event_type: eventType,
-          venue_id: form.venue_id
-        })
+    void (async () => {
+      const response = await requestConsent("GET", undefined, {
+        client_id: nextClientId,
+      });
 
-        return {
-          ...response,
-          event_type: eventType
-        }
-      })
-    )
-
-    updateResponse('dateOptions', buildDateOptionsResponseSummary(results, form.venue_id))
-
-    const firstSuccessfulPayload = results
-      .filter((response) => response.httpStatus < 400)
-      .map((response) => getResponseData(response))
-      .find((payload) => payload?.server_now)
-
-    if (firstSuccessfulPayload?.server_now) {
-      setSearchDates(buildSearchDates(4, firstSuccessfulPayload.server_now))
-    }
-
-    const nextCatalog = Object.fromEntries(
-      results.map((response) => [
-        response.event_type,
-        {
-          response,
-          courts: response.httpStatus < 400 ? normalizeDateOptionCourts(response, form.venue_id) : []
-        }
-      ])
-    )
-
-    setDateOptionsCatalog(nextCatalog)
-
-    const hasAnySuccess = results.some((response) => response.httpStatus < 400)
-    if (!hasAnySuccess) {
-      setLookupStatus((current) => ({ ...current, dateOptions: 'error' }))
-      return
-    }
-
-    setLookupStatus((current) => ({ ...current, dateOptions: 'success' }))
-  }
-
-  async function loadAvailability() {
-    setLookupStatus((current) => ({ ...current, slots: 'loading' }))
-
-    const dateOptionSlots = Object.entries(dateOptionsCatalog).flatMap(([eventType, item]) =>
-      buildSlotsFromDateOptions(item.courts || [], {
-        event_type: eventType,
-        venue_id: form.venue_id,
-        search_dates: searchDates
-      })
-    )
-
-    const requests = Object.entries(dateOptionsCatalog).flatMap(([eventType, item]) =>
-      (item.courts || [])
-        .filter((court) => String(getCourtVenueId(court)) === String(form.venue_id))
-        .map((court) => ({
-          event_type: eventType,
-          court_id: court.id,
-          court_title: court.title || court.name || `Корт ${court.id}`,
-          venue_id: String(getCourtVenueId(court) || form.venue_id)
-        }))
-    )
-
-    if (!requests.length) {
-      setSlots([])
-      setSelectedSlotKey('')
-      setSelectedSlot(null)
-      updateResponse('availability', {
-        venue_id: form.venue_id,
-        dates: searchDates,
-        tickets_count: form.tickets_count,
-        requests: []
-      })
-      setSlots(dateOptionSlots)
-      setSelectedSlotKey((current) => (dateOptionSlots.some((slot) => slot.key === current) ? current : dateOptionSlots[0]?.key || ''))
-      setLookupStatus((current) => ({ ...current, slots: dateOptionSlots.length ? 'success' : 'error' }))
-      return
-    }
-
-    const results = await Promise.all(
-      searchDates.flatMap((date) =>
-        requests.map(async (requestItem) => {
-          const response = await requestJson('/availability', 'GET', undefined, {
-            event_type: requestItem.event_type,
-            venue_id: requestItem.venue_id,
-            court_id: requestItem.court_id,
-            date
-          })
-
-          return {
-            ...response,
-            ...requestItem,
-            date
-          }
-        })
-      )
-    )
-
-    updateResponse('availability', buildAvailabilityResponseSummary(results, form.venue_id, searchDates, form.tickets_count))
-
-    const availabilitySlots = results
-      .filter((response) => response.httpStatus < 400)
-      .flatMap((response) =>
-        buildSlots(extractAvailabilityEvents(response), {
-          event_type: response.event_type,
-          court_id: response.court_id,
-          court_title: response.court_title,
-          venue_id: response.venue_id
-        })
-      )
-
-    const nextSlots = mergeSlots([...dateOptionSlots, ...availabilitySlots])
-      .sort((left, right) => new Date(left.starts_at).getTime() - new Date(right.starts_at).getTime())
-
-    setSlots(nextSlots)
-    setLookupStatus((current) => ({
-      ...current,
-      slots: nextSlots.length || results.some((response) => response.httpStatus < 400) ? 'success' : 'error'
-    }))
-
-    if (!nextSlots.length) {
-      setSelectedSlotKey('')
-      setSelectedSlot(null)
-      setForm((current) => ({
-        ...current,
-        event_id: '',
-        starts_at: '',
-        ends_at: '',
-        duration_minutes: ''
-      }))
-      return
-    }
-
-    setSelectedSlotKey((current) => (nextSlots.some((slot) => slot.key === current) ? current : nextSlots[0].key))
-  }
-
-  function updateResponse(step, payload) {
-    setResponses((current) => ({
-      ...current,
-      [step]: payload
-    }))
-  }
-
-  function syncSessionState(data) {
-    if (data.session_id) {
-      setSessionId(String(data.session_id))
-    }
-
-    if (data.hold_id) {
-      setHoldId(String(data.hold_id))
-    }
-
-    if (data.expires_at) {
-      setExpiresAt(data.expires_at)
-    }
-
-    if (data.available_tickets_before_hold !== undefined) {
-      setAvailableBeforeHold(data.available_tickets_before_hold)
-    }
-
-    if (data.available_tickets_after_hold !== undefined) {
-      setAvailableAfterHold(data.available_tickets_after_hold)
-    }
-  }
-
-  function setValidationNotice(message) {
-    pushToast('error', 'Ошибка', message, '')
-    return false
-  }
-
-  function validateForSession() {
-    if (!form.venue_id || !form.court_id || !form.event_type || !form.date) {
-      return setValidationNotice('Для создания сессии выберите площадку, корт, формат и дату.')
-    }
-
-    return true
-  }
-
-  function validateForHold() {
-    if (!form.venue_id || !form.court_id || !form.event_type || !form.date) {
-      return setValidationNotice('Для удержания слота выберите площадку, корт, формат и дату.')
-    }
-
-    if (!form.event_id || !form.starts_at || !form.ends_at || !form.duration_minutes || !form.tickets_count) {
-      return setValidationNotice('Для удержания слота нужны event_id, время начала, время окончания, длительность и количество мест.')
-    }
-
-    if (manualMode && !isScheduleValid(form.date, form.start_time, form.duration_minutes)) {
-      return setValidationNotice('Время должно быть во вторник–воскресенье с 10:00 до 22:00, а длительность должна помещаться в расписание.')
-    }
-
-    return true
-  }
-
-  function validateForSmsSend() {
-    if (!sessionId || !holdId || !form.phone) {
-      return setValidationNotice('Для отправки SMS нужны session_id, hold_id и номер телефона.')
-    }
-
-    return true
-  }
-
-  function validateForSmsVerify() {
-    if (!sessionId || !holdId || !form.phone || !smsCode) {
-      return setValidationNotice('Для проверки SMS нужны session_id, hold_id, номер телефона и код из SMS.')
-    }
-
-    return true
-  }
-
-  function validateForConfirm() {
-    if (!sessionId || !holdId || !form.first_name || !form.last_name || !form.phone || !form.email) {
-      return setValidationNotice('Для подтверждения заполните имя, фамилию, телефон и email.')
-    }
-
-    if (!form.privacy_policy_accepted || !form.personal_data_accepted) {
-      return setValidationNotice('Для подтверждения нужно принять оба согласия.')
-    }
-
-    return true
-  }
-
-  async function runStep(stepKey, handler) {
-    setLoadingStep(stepKey)
-
-    try {
-      const response = await handler()
-      updateResponse(stepKey, response)
-
-      const { successTitle, errorTitle } = stepMeta[stepKey] || {}
-      const code = response?.httpStatus || response?.status || ''
-
-      if ((response?.httpStatus || 500) < 400) {
-        if (successTitle) {
-          pushToast('success', successTitle, 'Операция выполнена успешно', code)
-        }
-      } else if (isSessionExpiredResponse(response)) {
-        pushToast('error', errorTitle || 'Ошибка', 'Сессия истекла, повторите цепочку с начала', code)
-      } else {
-        pushToast('error', errorTitle || 'Ошибка', getFirstErrorMessage(response), code)
+      if (
+        response.httpStatus === 200 &&
+        getResponseData(response)?.accepted === true
+      ) {
+        window.localStorage.setItem(consentAcceptedStorageKey, "true");
+        setStatus("accepted");
+        return;
       }
 
-      return response
-    } catch (error) {
-      const payload = {
-        httpStatus: 500,
-        status: 500,
-        data: {
-          error: 'client_error',
-          message: error instanceof Error ? error.message : 'Unknown client error'
-        }
+      if (response.httpStatus === 404) {
+        window.localStorage.removeItem(consentAcceptedStorageKey);
+        setStatus("required");
+        return;
       }
-      updateResponse(stepKey, payload)
-      const { errorTitle } = stepMeta[stepKey] || {}
-      pushToast('error', errorTitle || 'Ошибка', getFirstErrorMessage(payload), payload.httpStatus)
-      return payload
-    } finally {
-      setLoadingStep('')
+
+      const localAccepted =
+        window.localStorage.getItem(consentAcceptedStorageKey) === "true";
+      setStatus(localAccepted ? "accepted" : "required");
+    })();
+  }, []);
+
+  async function acceptConsent() {
+    if (!clientId) {
+      return;
     }
+
+    setBusy(true);
+    const response = await requestConsent("POST", {
+      client_id: clientId,
+      accepted: true,
+    });
+
+    if (
+      response.httpStatus === 200 &&
+      getResponseData(response)?.accepted === true
+    ) {
+      window.localStorage.setItem(consentAcceptedStorageKey, "true");
+      setStatus("accepted");
+      setMessageMode("initial");
+      setBusy(false);
+      return;
+    }
+
+    if (response.httpStatus >= 500 || response.httpStatus === 502) {
+      window.localStorage.setItem(consentAcceptedStorageKey, "true");
+      setStatus("accepted");
+      setMessageMode("initial");
+      pushToast(
+        "success",
+        "Согласие сохранено локально",
+        "Сервер сейчас недоступен, поэтому доступ открыт по локальному подтверждению.",
+      );
+      setBusy(false);
+      return;
+    }
+
+    pushToast(
+      "error",
+      "Не удалось сохранить согласие",
+      getFirstErrorMessage(response),
+      response.httpStatus,
+    );
+    setBusy(false);
   }
 
-  async function handleCreateSession() {
-    if (!validateForSession()) {
-      return
+  function declineConsent() {
+    setMessageMode("declined");
+    setStatus("required");
+  }
+
+  return {
+    status,
+    messageMode,
+    busy,
+    acceptConsent,
+    declineConsent,
+  };
+}
+
+export default function App() {
+  const { toasts, pushToast, removeToast } = useToasts();
+  const consent = useConsentGate(pushToast);
+
+  return (
+    <div className="page-shell">
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route
+          path="/venue/:venueId"
+          element={<VenuePage pushToast={pushToast} />}
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <ConsentOverlay consent={consent} />
+      <ToastViewport toasts={toasts} onClose={removeToast} />
+    </div>
+  );
+}
+
+function HomePage() {
+  const venues = Object.values(venueCatalog);
+  const [slotCounts, setSlotCounts] = useState({});
+
+  useEffect(() => {
+    void (async () => {
+      const entries = await Promise.all(
+        venues.map(async (venue) => {
+          const { slots } = await loadVenueSlotsForNextDays(venue.id);
+          const slotsCount = slots.length;
+
+          return [venue.id, slotsCount];
+        }),
+      );
+
+      setSlotCounts(Object.fromEntries(entries));
+    })();
+  }, []);
+
+  return (
+    <main className="layout layout-home">
+      <section className="hero-card">
+        <p className="hero-kicker">Padel · Москва</p>
+        <h1>Быстрый выбор записи</h1>
+        <p className="hero-text">
+          Сначала выберите площадку. На следующем экране будут показаны только
+          те времена, где уже есть свободные места и можно переходить к записи.
+        </p>
+      </section>
+
+      <section className="venue-grid">
+        {venues.map((venue) => (
+          <Link key={venue.id} to={`/venue/${venue.id}`} className="venue-card">
+            <span className="venue-title">{venue.title}</span>
+            <span className="venue-meta">
+              {slotCounts[venue.id] === undefined
+                ? "Считаем свободные слоты…"
+                : `${slotCounts[venue.id]} свободных слотов`}
+            </span>
+            <span className="venue-arrow">Перейти к слотам →</span>
+          </Link>
+        ))}
+      </section>
+    </main>
+  );
+}
+
+function VenuePage({ pushToast }) {
+  const { venueId = "" } = useParams();
+  const venue = venueCatalog[String(venueId)];
+  const [slots, setSlots] = useState([]);
+  const [loadingState, setLoadingState] = useState("idle");
+  const [lastUpdatedAt, setLastUpdatedAt] = useState("");
+  const [requestedTickets, setRequestedTickets] = useState(1);
+  const [selectedSlotKey, setSelectedSlotKey] = useState("");
+  const [profile, setProfile] = useState(initialProfile);
+  const [sessionId, setSessionId] = useState("");
+  const [holdId, setHoldId] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [availableBeforeHold, setAvailableBeforeHold] = useState(null);
+  const [availableAfterHold, setAvailableAfterHold] = useState(null);
+  const [smsCode, setSmsCode] = useState("");
+  const [verified, setVerified] = useState(false);
+  const [smsCooldownUntil, setSmsCooldownUntil] = useState(null);
+  const [loadingStep, setLoadingStep] = useState("");
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNow(Date.now());
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!venue) {
+      return;
     }
 
-    setHoldId('')
-    setExpiresAt('')
-    setAvailableBeforeHold(null)
-    setAvailableAfterHold(null)
-    setVerified(false)
-    setSmsCode('')
-    setSmsCooldownUntil(null)
+    loadSlots();
+  }, [venueId]);
 
-    const response = await runStep('session', () =>
-      requestJson('/session', 'POST', {
-        event_type: form.event_type,
-        venue_id: Number(form.venue_id),
-        court_id: Number(form.court_id),
-        date: form.date
-      })
-    )
+  const futureSlots = useMemo(
+    () => sortSlots(slots.filter((slot) => !isPastSlot(slot, now))),
+    [now, slots],
+  );
 
-    syncSessionState(getResponseData(response))
+  const maxTicketsAvailable = useMemo(() => {
+    if (!futureSlots.length) {
+      return 1;
+    }
+
+    return Math.max(
+      ...futureSlots.map((slot) => Number(slot.available_tickets) || 1),
+    );
+  }, [futureSlots]);
+
+  const visibleSlots = useMemo(() => {
+    return futureSlots.filter(
+      (slot) => Number(slot.available_tickets) >= requestedTickets,
+    );
+  }, [futureSlots, requestedTickets]);
+
+  const selectedSlot = useMemo(
+    () => visibleSlots.find((slot) => slot.key === selectedSlotKey) || null,
+    [selectedSlotKey, visibleSlots],
+  );
+
+  const sections = useMemo(
+    () => buildVenueSections(visibleSlots),
+    [visibleSlots],
+  );
+
+  const expiresInSeconds = useMemo(() => {
+    if (!expiresAt) {
+      return null;
+    }
+
+    return Math.max(
+      0,
+      Math.floor((new Date(expiresAt).getTime() - now) / 1000),
+    );
+  }, [expiresAt, now]);
+
+  const smsRetryInSeconds = useMemo(() => {
+    if (!smsCooldownUntil) {
+      return 0;
+    }
+
+    return Math.max(0, Math.ceil((smsCooldownUntil - now) / 1000));
+  }, [now, smsCooldownUntil]);
+
+  useEffect(() => {
+    if (!visibleSlots.some((slot) => slot.key === selectedSlotKey)) {
+      setSelectedSlotKey("");
+    }
+  }, [selectedSlotKey, visibleSlots]);
+
+  useEffect(() => {
+    if (requestedTickets > maxTicketsAvailable) {
+      setRequestedTickets(maxTicketsAvailable);
+    }
+  }, [maxTicketsAvailable, requestedTickets]);
+
+  useEffect(() => {
+    resetFlow();
+  }, [selectedSlotKey]);
+
+  if (!venue) {
+    return <Navigate to="/" replace />;
+  }
+
+  function resetFlow() {
+    setSessionId("");
+    setHoldId("");
+    setExpiresAt("");
+    setAvailableBeforeHold(null);
+    setAvailableAfterHold(null);
+    setVerified(false);
+    setSmsCode("");
+    setSmsCooldownUntil(null);
+    setLoadingStep("");
+  }
+
+  function updateProfile(event) {
+    const { name, value, type, checked } = event.target;
+    setProfile((current) => ({
+      ...current,
+      [name]: type === "checkbox" ? checked : value,
+    }));
+  }
+
+  async function loadSlots() {
+    setLoadingState("loading");
+
+    const result = await loadVenueSlotsForNextDays(venueId);
+    setSlots(result.slots);
+    setLastUpdatedAt(result.serverNow || new Date().toISOString());
+
+    if (!result.hasSuccess) {
+      setLoadingState("error");
+      pushToast(
+        "error",
+        "Не удалось загрузить слоты",
+        "Сервис временно не отвечает.",
+      );
+      return;
+    }
+
+    setLoadingState("success");
   }
 
   async function handleHold() {
-    if (!validateForHold()) {
-      return
+    if (!selectedSlot) {
+      pushToast(
+        "error",
+        "Слот не выбран",
+        "Сначала выберите время на площадке.",
+      );
+      return;
     }
 
-    setSessionId('')
-    setHoldId('')
-    setExpiresAt('')
-    setAvailableBeforeHold(null)
-    setAvailableAfterHold(null)
-    setVerified(false)
-    setSmsCode('')
-    setSmsCooldownUntil(null)
-    setLoadingStep('hold')
+    setLoadingStep("hold");
 
-    try {
-      const sessionResponse = await requestJson('/session', 'POST', {
-        event_type: form.event_type,
-        venue_id: Number(form.venue_id),
-        court_id: Number(form.court_id),
-        date: form.date
-      })
+    const sessionResponse = await requestJson("/session", "POST", {
+      event_type: selectedSlot.event_type,
+      venue_id: Number(selectedSlot.venue_id),
+      court_id: Number(selectedSlot.court_id),
+      date: selectedSlot.date,
+    });
 
-      updateResponse('session', sessionResponse)
-
-      if ((sessionResponse?.httpStatus || 500) >= 400) {
-        if (isSessionExpiredResponse(sessionResponse)) {
-          pushToast('error', 'Не удалось создать сессию', 'Сессия истекла, повторите цепочку с начала', sessionResponse.httpStatus)
-        } else {
-          pushToast('error', 'Не удалось создать сессию', getFirstErrorMessage(sessionResponse), sessionResponse.httpStatus)
-        }
-        return
-      }
-
-      const sessionData = getResponseData(sessionResponse)
-      syncSessionState(sessionData)
-
-      if (!sessionData.session_id) {
-        pushToast('error', 'Не удалось создать сессию', 'API не вернул session_id', sessionResponse.httpStatus)
-        return
-      }
-
-      const holdResponse = await requestJson('/hold', 'PUT', {
-        session_id: String(sessionData.session_id),
-        event_id: Number(form.event_id),
-        starts_at: form.starts_at,
-        ends_at: form.ends_at,
-        duration_minutes: Number(form.duration_minutes),
-        tickets_count: Number(form.tickets_count)
-      })
-
-      updateResponse('hold', holdResponse)
-
-      if ((holdResponse?.httpStatus || 500) >= 400) {
-        if (isSessionExpiredResponse(holdResponse)) {
-          pushToast('error', 'Не удалось удержать слот', 'Сессия истекла, повторите цепочку с начала', holdResponse.httpStatus)
-        } else {
-          pushToast('error', 'Не удалось удержать слот', getFirstErrorMessage(holdResponse), holdResponse.httpStatus)
-        }
-        return
-      }
-
-      syncSessionState(getResponseData(holdResponse))
-      pushToast('success', 'Слот удержан', 'Сессия создана и слот успешно удержан', holdResponse.httpStatus)
-    } catch (error) {
-      pushToast('error', 'Не удалось удержать слот', error instanceof Error ? error.message : 'Неизвестная ошибка', 500)
-    } finally {
-      setLoadingStep('')
+    if (sessionResponse.httpStatus >= 400) {
+      pushToast(
+        "error",
+        "Не удалось создать сессию",
+        getFirstErrorMessage(sessionResponse),
+        sessionResponse.httpStatus,
+      );
+      setLoadingStep("");
+      return;
     }
+
+    const sessionData = getResponseData(sessionResponse);
+    const nextSessionId = String(sessionData.session_id || "");
+
+    setSessionId(nextSessionId);
+    setExpiresAt(sessionData.expires_at || "");
+
+    const holdResponse = await requestJson("/hold", "PUT", {
+      session_id: nextSessionId,
+      event_id: Number(selectedSlot.event_id),
+      starts_at: selectedSlot.starts_at,
+      ends_at: selectedSlot.ends_at,
+      duration_minutes: Number(selectedSlot.duration_minutes),
+      tickets_count: requestedTickets,
+    });
+
+    if (holdResponse.httpStatus >= 400) {
+      pushToast(
+        "error",
+        "Не удалось удержать слот",
+        getFirstErrorMessage(holdResponse),
+        holdResponse.httpStatus,
+      );
+      setLoadingStep("");
+      return;
+    }
+
+    const holdData = getResponseData(holdResponse);
+    setHoldId(String(holdData.hold_id || ""));
+    setSessionId(String(holdData.session_id || nextSessionId));
+    setExpiresAt(holdData.expires_at || sessionData.expires_at || "");
+    setAvailableBeforeHold(holdData.available_tickets_before_hold ?? null);
+    setAvailableAfterHold(holdData.available_tickets_after_hold ?? null);
+    pushToast("success", "Слот удержан", "Теперь можно запросить SMS-код.");
+    setLoadingStep("");
   }
 
   async function handleSmsSend() {
-    if (!validateForSmsSend()) {
-      return
+    if (!sessionId || !holdId) {
+      pushToast("error", "Нет активного удержания", "Сначала удержите слот.");
+      return;
     }
 
-    const response = await runStep('smsSend', () =>
-      requestJson('/sms-send', 'POST', {
-        session_id: sessionId,
-        hold_id: holdId,
-        phone: form.phone
-      })
-    )
-
-    const data = getResponseData(response)
-    syncSessionState(data)
-
-    if (typeof data.retry_after_seconds === 'number' && data.retry_after_seconds > 0) {
-      setSmsCooldownUntil(Date.now() + data.retry_after_seconds * 1000)
+    if (!profile.phone.trim()) {
+      pushToast(
+        "error",
+        "Нужен телефон",
+        "Введите номер телефона для получения SMS.",
+      );
+      return;
     }
+
+    setLoadingStep("smsSend");
+
+    const response = await requestJson("/sms-send", "POST", {
+      session_id: sessionId,
+      hold_id: holdId,
+      phone: profile.phone.trim(),
+    });
+
+    if (response.httpStatus >= 400) {
+      pushToast(
+        "error",
+        "Не удалось отправить SMS",
+        getFirstErrorMessage(response),
+        response.httpStatus,
+      );
+      setLoadingStep("");
+      return;
+    }
+
+    const data = getResponseData(response);
+
+    if (toPositiveNumber(data.retry_after_seconds) > 0) {
+      setSmsCooldownUntil(Date.now() + Number(data.retry_after_seconds) * 1000);
+    }
+
+    pushToast("success", "SMS отправлено", "Введите код из сообщения.");
+    setLoadingStep("");
   }
 
   async function handleSmsVerify() {
-    if (!validateForSmsVerify()) {
-      return
+    if (!sessionId || !holdId) {
+      pushToast("error", "Нет активного удержания", "Сначала удержите слот.");
+      return;
     }
 
-    const response = await runStep('smsVerify', () =>
-      requestJson('/sms-verify', 'POST', {
-        session_id: sessionId,
-        hold_id: holdId,
-        phone: form.phone,
-        code: smsCode,
-        otp: smsCode
-      })
-    )
+    if (!profile.phone.trim() || !smsCode.trim()) {
+      pushToast("error", "Не хватает данных", "Введите телефон и SMS-код.");
+      return;
+    }
 
-    const data = getResponseData(response)
-    syncSessionState(data)
-    setVerified(data.status === 'verified')
+    setLoadingStep("smsVerify");
+
+    const response = await requestJson("/sms-verify", "POST", {
+      session_id: sessionId,
+      hold_id: holdId,
+      phone: profile.phone.trim(),
+      code: smsCode.trim(),
+      otp: smsCode.trim(),
+    });
+
+    const data = getResponseData(response);
+
+    if (response.httpStatus >= 400 || data?.status !== "verified") {
+      pushToast(
+        "error",
+        "Код не подтверждён",
+        getFirstErrorMessage(response),
+        response.httpStatus,
+      );
+      setVerified(false);
+      setLoadingStep("");
+      return;
+    }
+
+    setVerified(true);
+    pushToast("success", "Код подтверждён", "Можно завершать запись.");
+    setLoadingStep("");
   }
 
   async function handleConfirm() {
-    if (!validateForConfirm()) {
-      return
+    if (!verified) {
+      pushToast("error", "Код не подтверждён", "Сначала подтвердите SMS-код.");
+      return;
     }
 
-    const response = await runStep('confirm', () =>
-      requestJson('/confirm', 'POST', {
-        session_id: sessionId,
-        hold_id: holdId,
-        first_name: form.first_name,
-        last_name: form.last_name,
-        phone: form.phone,
-        email: form.email,
-        privacy_policy_accepted: form.privacy_policy_accepted,
-        personal_data_accepted: form.personal_data_accepted
-      })
-    )
+    if (
+      !profile.first_name.trim() ||
+      !profile.last_name.trim() ||
+      !profile.phone.trim() ||
+      !profile.email.trim()
+    ) {
+      pushToast(
+        "error",
+        "Не хватает данных",
+        "Заполните имя, фамилию, телефон и почту.",
+      );
+      return;
+    }
 
-    syncSessionState(getResponseData(response))
+    setLoadingStep("confirm");
+
+    const response = await requestJson("/confirm", "POST", {
+      session_id: sessionId,
+      hold_id: holdId,
+      first_name: profile.first_name.trim(),
+      last_name: profile.last_name.trim(),
+      phone: profile.phone.trim(),
+      email: profile.email.trim(),
+      privacy_policy_accepted: profile.privacy_policy_accepted,
+      personal_data_accepted: profile.personal_data_accepted,
+    });
+
+    if (response.httpStatus >= 400) {
+      pushToast(
+        "error",
+        isSessionExpiredResponse(response)
+          ? "Сессия истекла"
+          : "Не удалось подтвердить запись",
+        isSessionExpiredResponse(response)
+          ? "Сессия истекла, повторите цепочку с начала."
+          : getFirstErrorMessage(response),
+        response.httpStatus,
+      );
+      setLoadingStep("");
+      return;
+    }
+
+    pushToast(
+      "success",
+      "Запись подтверждена",
+      "Проверьте итог на стороне сервиса.",
+    );
+    setLoadingStep("");
   }
 
-  const discoveredEventTypes = eventTypeOptions.filter((item) => item.slotsCount > 0)
-  const discoveredEventTypesText = discoveredEventTypes.length
-    ? discoveredEventTypes
-        .map((item) => `${item.label}${item.slotsCount ? ` (${item.slotsCount} слот.)` : ''}`)
-        .join(', ')
-    : 'Не найдены'
-  const searchDatesText = searchDates.map((date) => formatDateHuman(date)).join(', ')
-  const availableDatesText = availableDateOptions.length
-    ? availableDateOptions.map((item) => item.label).join(', ')
-    : 'Не найдены'
-  const selectedVenueTitle = venueMap.get(String(form.venue_id)) || (form.venue_id ? `Площадка ${form.venue_id}` : '—')
-  const selectedCourtTitle = courtMap.get(String(form.court_id)) || (form.court_id ? `Корт ${form.court_id}` : '—')
-  const currentEventTitle = getEventTypeLabel(form.event_type, selectedSlot?.event_title)
-
   return (
-    <div className="page">
-      <ToastViewport toasts={toasts} onClose={removeToast} />
-      <div className="container">
-        <header className="hero">
-          <div>
-            <h1>Помощник регистрации Mos Sport</h1>
-            <p>Локальная страница для пошаговой регистрации через API outdoor.sport.mos.ru.</p>
-          </div>
-          <div className="status-card">
-            <div>
-              <span className="label">Идентификатор сессии</span>
-              <strong>{sessionId || '—'}</strong>
-            </div>
-            <div>
-              <span className="label">Идентификатор hold</span>
-              <strong>{holdId || '—'}</strong>
-            </div>
-            <div>
-              <span className="label">Сессия истекает</span>
-              <strong>{expiresAt ? formatDateTimeHuman(expiresAt) : '—'}</strong>
-            </div>
-            <div>
-              <span className="label">Обратный отсчёт</span>
-              <strong>{expiresInSeconds === null ? '—' : formatRemaining(expiresInSeconds)}</strong>
-            </div>
-          </div>
-        </header>
+    <main className="layout layout-venue">
+      <section className="page-topbar">
+        <div>
+          <Link className="back-link" to="/">
+            ← Все площадки
+          </Link>
+          <h1>{venue.title}</h1>
+          <p className="page-description">
+            Выберите удобное время. Ниже показываются только доступные варианты
+            с открытой записью и нужным вам количеством мест.
+          </p>
+        </div>
 
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>Параметры записи</h2>
-            </div>
-            <label className="mode-toggle">
-              <input type="checkbox" checked={manualMode} onChange={() => setManualMode((current) => !current)} />
-              <span>Ручной режим</span>
-            </label>
+        <div className="page-actions">
+          <div className="page-updated-at">
+            Обновлено: {formatDateTimeHuman(lastUpdatedAt)}
           </div>
+          <button
+            type="button"
+            onClick={loadSlots}
+            disabled={loadingState === "loading"}
+          >
+            {loadingState === "loading" ? "Обновление…" : "Обновить"}
+          </button>
+        </div>
+      </section>
 
-          <div className="grid">
-            <label>
-              <span>Формат занятия</span>
-              <select name="event_type" value={form.event_type} onChange={updateForm}>
-                <option value="">{eventTypeOptions.length ? 'Выберите формат' : 'Нет доступных форматов'}</option>
-                {eventTypeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label} ({option.slotsCount} слот.)
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>{manualMode ? 'Дата' : 'Период поиска'}</span>
-              {manualMode ? (
-                <input type="date" name="date" value={form.date} onChange={updateForm} />
-              ) : (
-                <select name="date" value={form.date} onChange={updateForm}>
-                  <option value="">{availableDateOptions.length ? 'Выберите дату' : 'Нет доступных дат'}</option>
-                  {availableDateOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label} ({option.slotsCount} слот.)
-                    </option>
-                  ))}
-                </select>
-              )}
-            </label>
-            <label>
-              <span>Площадка</span>
-              <select name="venue_id" value={form.venue_id} onChange={updateForm}>
-                <option value="">Выберите площадку</option>
-                {venues.map((venue) => (
-                  <option key={venue.id} value={venue.id}>
-                    {venue.title}, {venue.address || 'адрес не указан'}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Корт</span>
-              {manualCourtMode ? (
-                <input
-                  type="number"
-                  name="court_id"
-                  value={form.court_id}
-                  onChange={updateForm}
-                  min="10"
-                  max="15"
-                  placeholder="От 10 до 15"
-                />
-              ) : (
-                <select name="court_id" value={form.court_id} onChange={updateForm}>
-                  <option value="">{availableCourts.length ? 'Выберите корт' : 'Нет кортов для выбранного формата'}</option>
-                  {availableCourts.map((court) => (
-                    <option key={court.id} value={court.id}>
-                      {court.title || court.name || `Корт ${court.id}`} ({court.slotsCount} слот.)
-                    </option>
-                  ))}
-                </select>
-              )}
-            </label>
-            <label>
-              <span>Режим выбора корта</span>
-              <select value={manualCourtMode ? 'manual' : 'auto'} onChange={(event) => setManualCourtMode(event.target.value === 'manual')}>
-                <option value="auto">Из списка</option>
-                <option value="manual">Вручную</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="summary-card">
-            <h3>Доступные форматы и корты</h3>
-            <div className="summary-grid">
-              <div><span>Найденные форматы</span><strong>{discoveredEventTypesText}</strong></div>
-              <div><span>Окно поиска</span><strong>{searchDatesText}</strong></div>
-              <div><span>Доступные даты</span><strong>{availableDatesText}</strong></div>
-              <div><span>Доступные корты</span><strong>{availableCourts.length || '0'}</strong></div>
-              <div><span>Режим выбора</span><strong>{manualCourtMode ? 'Ручной court_id' : 'Выбор из date-options'}</strong></div>
-              <div><span>Выбранный court_id</span><strong>{form.court_id || '—'}</strong></div>
-            </div>
-          </div>
-
-          {!manualMode ? (
-            <>
-              <div className="slot-toolbar">
-                <button type="button" onClick={loadAvailability} disabled={!form.venue_id}>
-                  Обновить слоты
-                </button>
-                <span className="slot-status">
-                  {lookupStatus.slots === 'loading'
-                    ? 'Загрузка доступных слотов по всем форматам, кортам и дням...'
-                    : lookupStatus.slots === 'error'
-                      ? 'Ошибка загрузки слотов'
-                      : visibleSlots.length
-                        ? `Найдено доступных слотов: ${visibleSlots.length}`
-                        : 'Доступные слоты не найдены'}
+      <section className="venue-content">
+        <div className="slots-column">
+          <section className="legend-card">
+            <div className="legend-title">Легенда</div>
+            <div className="legend-items">
+              <div className="legend-item">
+                <span className="legend-swatch legend-swatch-ready" />
+                <span>Можно пробовать записываться сейчас</span>
+              </div>
+              <div className="legend-item">
+                <span className="legend-swatch legend-swatch-disabled" />
+                <span>
+                  На официальном сайте закрыто, но здесь можно попробовать
+                  записаться без гарантии
                 </span>
               </div>
+            </div>
+          </section>
 
-              <div className="grid">
-                <label>
-                  <span>Доступные слоты</span>
-                  <select value={selectedSlotKey} onChange={(event) => setSelectedSlotKey(event.target.value)}>
-                    <option value="">Выберите слот</option>
-                    {visibleSlots.map((slot) => (
-                      <option key={slot.key} value={slot.key}>
-                        {formatSlotLabel(slot)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Количество минут для брони</span>
-                  <select
-                    name="duration_minutes"
-                    value={form.duration_minutes}
-                    onChange={updateForm}
-                    disabled={!selectedSlot}
-                  >
-                    <option value="">{selectedSlot ? 'Выберите длительность' : 'Сначала выберите время'}</option>
-                    {(selectedSlot?.duration_options || [])
-                      .filter((durationOption) => Number(durationOption.available_tickets) >= Math.max(1, Number(form.tickets_count) || 1))
-                      .map((durationOption) => (
-                      <option key={durationOption.key} value={durationOption.duration_minutes}>
-                        {durationOption.duration_minutes} минут
-                      </option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Количество мест</span>
-                  <input
-                    type="number"
-                    name="tickets_count"
-                    value={form.tickets_count}
-                    onChange={updateForm}
-                    min="1"
-                    max={Math.max(1, selectedDurationTicketsMax)}
-                    placeholder="Например: 1"
-                  />
-                </label>
+          {loadingState === "loading" && (
+            <div className="empty-state">Загрузка слотов…</div>
+          )}
+
+          {loadingState !== "loading" && sections.length === 0 && (
+            <div className="empty-state">
+              Под выбранное количество мест сейчас ничего не найдено.
+            </div>
+          )}
+
+          {sections.map((section) => (
+            <section key={section.eventType} className="event-section">
+              <h2 className="event-section-title">{section.title}</h2>
+              {section.description ? (
+                <div
+                  className="event-section-description"
+                  dangerouslySetInnerHTML={{ __html: section.description }}
+                />
+              ) : null}
+
+              {section.dates.map((dateGroup) => (
+                <div
+                  key={`${section.eventType}:${dateGroup.date}`}
+                  className="date-section"
+                >
+                  <div className="date-section-title">{dateGroup.label}</div>
+
+                  {dateGroup.courts.map((courtGroup) => (
+                    <div
+                      key={`${dateGroup.date}:${courtGroup.courtId}`}
+                      className="court-section"
+                    >
+                      <div className="court-section-title">
+                        {courtGroup.courtTitle}
+                      </div>
+
+                      <div className="slots-grid">
+                        {courtGroup.slots.map((slot) => (
+                          <button
+                            key={slot.key}
+                            type="button"
+                            className={`slot-card slot-card-${getSlotVisualStatus(slot)} ${selectedSlotKey === slot.key ? "slot-card-active" : ""}`}
+                            onClick={() => setSelectedSlotKey(slot.key)}
+                          >
+                            <span className="slot-time">{slot.time}</span>
+                            <span className="slot-duration">
+                              {slot.duration_minutes} мин
+                            </span>
+                            <span className="slot-tickets">
+                              мест: {slot.available_tickets}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </section>
+          ))}
+        </div>
+
+        <aside className="booking-column">
+          <section className="booking-card">
+            <h2>Выбранное время</h2>
+
+            {selectedSlot ? (
+              <div className="selection-summary">
+                <div>
+                  <span>Формат</span>
+                  <strong>{selectedSlot.event_title}</strong>
+                </div>
+                <div>
+                  <span>Дата</span>
+                  <strong>{formatDateHuman(selectedSlot.date)}</strong>
+                </div>
+                <div>
+                  <span>Начало</span>
+                  <strong>{selectedSlot.time}</strong>
+                </div>
+                <div>
+                  <span>Длительность</span>
+                  <strong>{selectedSlot.duration_minutes} мин</strong>
+                </div>
+                <div>
+                  <span>Площадка</span>
+                  <strong>{selectedSlot.venue_title}</strong>
+                </div>
+                <div>
+                  <span>Корт</span>
+                  <strong>{selectedSlot.court_title}</strong>
+                </div>
+                <div>
+                  <span>Свободно мест</span>
+                  <strong>{selectedSlot.available_tickets}</strong>
+                </div>
+                <div>
+                  <span>Статус</span>
+                  <strong>
+                    {getSlotVisualStatus(selectedSlot) === "ready"
+                      ? "Можно пробовать записываться"
+                      : "На официальном сайте закрыто, но здесь можно попробовать без гарантии"}
+                  </strong>
+                </div>
               </div>
-            </>
-          ) : null}
+            ) : (
+              <p className="placeholder-text">
+                Нажмите на карточку времени. После этого можно будет перейти к
+                записи.
+              </p>
+            )}
+          </section>
 
-          {manualMode ? (
-            <div className="grid">
+          <section className="booking-card">
+            <h2>Данные для записи</h2>
+            <div className="form-grid">
               <label>
-                <span>Идентификатор площадки</span>
-                <input name="venue_id" value={form.venue_id} onChange={updateForm} />
+                <span>Сколько мест нужно</span>
+                <input
+                  type="number"
+                  min="1"
+                  max={Math.max(1, maxTicketsAvailable)}
+                  value={requestedTickets}
+                  onChange={(event) =>
+                    setRequestedTickets(
+                      Math.min(
+                        Math.max(1, Number(event.target.value) || 1),
+                        Math.max(1, maxTicketsAvailable),
+                      ),
+                    )
+                  }
+                />
               </label>
               <label>
-                <span>Идентификатор корта</span>
-                <input name="court_id" value={form.court_id} onChange={updateForm} />
+                <span>Имя</span>
+                <input
+                  name="first_name"
+                  value={profile.first_name}
+                  onChange={updateProfile}
+                  placeholder="Например: Иван"
+                />
               </label>
               <label>
-                <span>Код формата</span>
-                <input name="event_type" value={form.event_type} onChange={updateForm} />
+                <span>Фамилия</span>
+                <input
+                  name="last_name"
+                  value={profile.last_name}
+                  onChange={updateProfile}
+                  placeholder="Например: Иванов"
+                />
               </label>
               <label>
-                <span>Время начала</span>
-                <input type="time" name="start_time" value={form.start_time} onChange={updateForm} />
+                <span>Телефон</span>
+                <input
+                  name="phone"
+                  value={profile.phone}
+                  onChange={updateProfile}
+                  placeholder="+79991234567"
+                />
               </label>
               <label>
-                <span>Идентификатор события</span>
-                <input name="event_id" value={form.event_id} onChange={updateForm} />
-              </label>
-              <label>
-                <span>Начало</span>
-                <input name="starts_at" value={form.starts_at} onChange={updateForm} />
-              </label>
-              <label>
-                <span>Окончание</span>
-                <input name="ends_at" value={form.ends_at} onChange={updateForm} />
-              </label>
-              <label>
-                <span>Длительность, минут</span>
-                <input name="duration_minutes" value={form.duration_minutes} onChange={updateForm} />
-              </label>
-              <label>
-                <span>Количество мест</span>
-                <input name="tickets_count" value={form.tickets_count} onChange={updateForm} />
+                <span>Email</span>
+                <input
+                  name="email"
+                  value={profile.email}
+                  onChange={updateProfile}
+                  placeholder="name@example.com"
+                />
               </label>
             </div>
-          ) : null}
+          </section>
 
-          <div className="summary-card">
-            <h3>Текущая выбранная запись</h3>
-            <div className="summary-grid">
-              <div><span>Площадка</span><strong>{selectedVenueTitle}</strong></div>
-              <div><span>Корт</span><strong>{selectedCourtTitle}</strong></div>
-              <div><span>Формат</span><strong>{currentEventTitle}</strong></div>
-              <div><span>`venue_id`</span><strong>{form.venue_id || '—'}</strong></div>
-              <div><span>`court_id`</span><strong>{form.court_id || '—'}</strong></div>
-              <div><span>`event_type`</span><strong>{form.event_type || '—'}</strong></div>
-              <div><span>Дата</span><strong>{formatDateHuman(form.date)}</strong></div>
-              <div><span>Время</span><strong>{form.starts_at && form.ends_at ? `${formatTimeHuman(form.starts_at)}–${formatTimeHuman(form.ends_at)}` : '—'}</strong></div>
-              <div><span>Длительность</span><strong>{form.duration_minutes ? `${form.duration_minutes} минут` : '—'}</strong></div>
-              <div><span>Мест</span><strong>{form.tickets_count || '—'}</strong></div>
-              <div><span>Событие</span><strong>{form.event_id || '—'}</strong></div>
-              <div><span>`starts_at`</span><strong>{form.starts_at || '—'}</strong></div>
-              <div><span>`ends_at`</span><strong>{form.ends_at || '—'}</strong></div>
+          <section className="booking-card">
+            <h2>Как записаться</h2>
+            <div className="action-stack">
+              <button
+                type="button"
+                onClick={handleHold}
+                disabled={!selectedSlot || loadingStep === "hold"}
+              >
+                {loadingStep === "hold"
+                  ? "Готовим запись…"
+                  : "1. Забронировать это время"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSmsSend}
+                disabled={
+                  !sessionId ||
+                  !holdId ||
+                  smsRetryInSeconds > 0 ||
+                  loadingStep === "smsSend"
+                }
+              >
+                {loadingStep === "smsSend"
+                  ? "Отправляем код…"
+                  : smsRetryInSeconds > 0
+                    ? `2. Повтор через ${smsRetryInSeconds} с`
+                    : "2. Получить код по SMS"}
+              </button>
+
+              <label>
+                <span>Код из SMS</span>
+                <input
+                  value={smsCode}
+                  onChange={(event) => setSmsCode(event.target.value)}
+                  placeholder="Введите код"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={handleSmsVerify}
+                disabled={
+                  !sessionId ||
+                  !holdId ||
+                  !smsCode.trim() ||
+                  loadingStep === "smsVerify"
+                }
+              >
+                {loadingStep === "smsVerify"
+                  ? "Проверяем код…"
+                  : "3. Подтвердить код"}
+              </button>
+
+              <button
+                type="button"
+                className="confirm-button"
+                onClick={handleConfirm}
+                disabled={!verified || loadingStep === "confirm"}
+              >
+                {loadingStep === "confirm"
+                  ? "Завершаем запись…"
+                  : "4. Завершить запись"}
+              </button>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section className="panel">
-          <h2>Данные пользователя</h2>
-          <div className="grid">
-            <label>
-              <span>Имя</span>
-              <input name="first_name" value={form.first_name} onChange={updateForm} placeholder="Например: Иван" />
-            </label>
-            <label>
-              <span>Фамилия</span>
-              <input name="last_name" value={form.last_name} onChange={updateForm} placeholder="Например: Иванов" />
-            </label>
-            <label>
-              <span>Телефон</span>
-              <input name="phone" value={form.phone} onChange={updateForm} placeholder="+79991234567" />
-            </label>
-            <label>
-              <span>Email</span>
-              <input name="email" value={form.email} onChange={updateForm} placeholder="name@example.com" />
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                name="privacy_policy_accepted"
-                checked={form.privacy_policy_accepted}
-                onChange={updateForm}
-              />
-              <span>Согласие с политикой конфиденциальности</span>
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                name="personal_data_accepted"
-                checked={form.personal_data_accepted}
-                onChange={updateForm}
-              />
-              <span>Согласие на обработку персональных данных</span>
-            </label>
-          </div>
-        </section>
-
-        <section className="panel">
-          <h2>Шаги</h2>
-          <div className="actions">
-            <button type="button" onClick={handleHold} disabled={loadingStep === 'hold'}>
-              {loadingStep === 'hold' ? 'Удержание...' : '1. Удержать слот'}
-            </button>
-            <button
-              type="button"
-              onClick={handleSmsSend}
-              disabled={!sessionId || !holdId || smsRetryInSeconds > 0 || loadingStep === 'smsSend'}
-            >
-              {loadingStep === 'smsSend'
-                ? 'Отправка...'
-                : smsRetryInSeconds > 0
-                  ? `2. Повтор через ${smsRetryInSeconds} с`
-                  : '2. Отправить SMS'}
-            </button>
-          </div>
-
-          <div className="verify-row">
-            <label className="sms-code">
-              <span>SMS-код</span>
-              <input value={smsCode} onChange={(event) => setSmsCode(event.target.value)} placeholder="Введите код" />
-            </label>
-            <button
-              type="button"
-              onClick={handleSmsVerify}
-              disabled={!sessionId || !holdId || !smsCode || loadingStep === 'smsVerify'}
-            >
-              {loadingStep === 'smsVerify' ? 'Проверка...' : '3. Проверить код'}
-            </button>
-            <button
-              type="button"
-              className="confirm"
-              onClick={handleConfirm}
-              disabled={!verified || loadingStep === 'confirm'}
-            >
-              {loadingStep === 'confirm' ? 'Подтверждение...' : '4. Подтвердить запись'}
-            </button>
-          </div>
-
-          <div className="meta">
-            <div>SMS подтверждён: <strong>{verified ? 'да' : 'нет'}</strong></div>
-            <div>Мест до hold: <strong>{availableBeforeHold ?? '—'}</strong></div>
-            <div>Мест после hold: <strong>{availableAfterHold ?? '—'}</strong></div>
-          </div>
-        </section>
-
-      </div>
-    </div>
-  )
+          <section className="booking-card">
+            <h2>Служебная информация</h2>
+            <div className="selection-summary">
+              <div>
+                <span>Код подтверждён</span>
+                <strong>{verified ? "Да" : "Нет"}</strong>
+              </div>
+              <div>
+                <span>Время удержания слота</span>
+                <strong>
+                  {expiresInSeconds !== null
+                    ? formatRemaining(expiresInSeconds)
+                    : "—"}
+                </strong>
+              </div>
+              <div>
+                <span>Мест до удержания</span>
+                <strong>{availableBeforeHold ?? "—"}</strong>
+              </div>
+              <div>
+                <span>Мест после удержания</span>
+                <strong>{availableAfterHold ?? "—"}</strong>
+              </div>
+              <div>
+                <span>Номер сессии</span>
+                <strong>{sessionId || "—"}</strong>
+              </div>
+              <div>
+                <span>Номер удержания</span>
+                <strong>{holdId || "—"}</strong>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  );
 }
 
 function ToastViewport({ toasts, onClose }) {
@@ -1791,16 +1560,80 @@ function ToastViewport({ toasts, onClose }) {
     <div className="toast-viewport">
       {toasts.map((toast) => (
         <div key={toast.id} className={`toast toast-${toast.type}`}>
-          <button type="button" className="toast-close" onClick={() => onClose(toast.id)}>
+          <button
+            type="button"
+            className="toast-close"
+            onClick={() => onClose(toast.id)}
+          >
             ×
           </button>
           <div className="toast-title">
             {toast.title}
-            {toast.code ? ` · HTTP ${toast.code}` : ''}
+            {toast.code ? ` · HTTP ${toast.code}` : ""}
           </div>
           <div className="toast-message">{toast.message}</div>
         </div>
       ))}
     </div>
-  )
+  );
+}
+
+function ConsentOverlay({ consent }) {
+  if (consent.status === "accepted") {
+    return null;
+  }
+
+  const isLoading = consent.status === "loading";
+  const isDeclined = consent.messageMode === "declined";
+
+  return (
+    <div className="consent-overlay">
+      <div className="consent-card">
+        <div className="consent-badge">🔐 Согласие обязательно</div>
+        <h2>
+          {isLoading
+            ? "Проверяем доступ…"
+            : isDeclined
+              ? "Без согласия продолжить нельзя"
+              : "Перед началом нужно согласие"}
+        </h2>
+        <p className="consent-text">
+          {isLoading
+            ? "Пожалуйста, подождите несколько секунд."
+            : isDeclined
+              ? "Чтобы пользоваться сайтом и оформлять запись, нужно принять согласие на обработку персональных данных."
+              : "Для работы сайта нужно принять согласие на обработку персональных данных. Сначала откройте документ, затем подтвердите согласие."}
+        </p>
+        {!isLoading && (
+          <>
+            <a
+              className="consent-link"
+              href={consentDocumentUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              📄 Открыть документ
+            </a>
+            <div className="consent-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={consent.declineConsent}
+                disabled={consent.busy}
+              >
+                Не согласен(-на)
+              </button>
+              <button
+                type="button"
+                onClick={consent.acceptConsent}
+                disabled={consent.busy}
+              >
+                {consent.busy ? "Сохраняем…" : "Согласен(-на)"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }

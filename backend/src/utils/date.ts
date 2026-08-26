@@ -3,6 +3,7 @@ import { MAX_ALERT_DATE, MONTHS, TIMEZONE } from '../config'
 export interface ParsedDateResult {
   ok: boolean
   date?: string
+  dates?: string[]
   error?: string
   requiresFutureModeChoice?: boolean
 }
@@ -132,88 +133,205 @@ export function isValidYmd(date: string): boolean {
   return parts.year === year && parts.month === month && parts.day === day
 }
 
-export function parseFlexibleDateInput(input: string): ParsedDateResult {
-  const current = getCurrentMskContext()
-  const normalized = String(input || '')
+function normalizeDateToken(value: string): string {
+  return String(value || '')
     .toLowerCase()
     .replace(/,/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function validateParsedDate(date: string, currentDate: string): ParsedDateResult | null {
+  if (!isValidYmd(date)) {
+    return null
+  }
+
+  if (date < currentDate) {
+    return { ok: false, error: 'Нельзя выбрать прошедшую дату.' }
+  }
+
+  if (date > MAX_ALERT_DATE) {
+    return { ok: false, error: `Дата должна быть не позже ${formatDateHuman(MAX_ALERT_DATE)}.` }
+  }
+
+  return {
+    ok: true,
+    date,
+    dates: [date],
+    requiresFutureModeChoice: daysBetweenYmd(currentDate, date) > 2
+  }
+}
+
+function findNearestFutureDateByDay(day: number, current: ReturnType<typeof getCurrentMskContext>): string | null {
+  for (let monthOffset = 0; monthOffset <= 12; monthOffset += 1) {
+    const baseMonthIndex = current.month - 1 + monthOffset
+    const year = current.year + Math.floor(baseMonthIndex / 12)
+    const month = (baseMonthIndex % 12) + 1
+    const candidate = formatYmdParts(year, month, day)
+
+    if (!isValidYmd(candidate)) {
+      continue
+    }
+
+    if (candidate >= current.date) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
+function parseSingleFlexibleDateToken(token: string, current: ReturnType<typeof getCurrentMskContext>): ParsedDateResult {
+  const normalized = normalizeDateToken(token)
 
   if (!normalized) {
     return { ok: false, error: 'Дата не указана.' }
   }
 
-  const candidates: Array<{ year: number; month: number; day: number }> = []
+  const candidates: string[] = []
 
-  let match = normalized.match(/^(\d{4})[.\-/ ](\d{1,2})[.\-/ ](\d{1,2})$/)
+  let match = normalized.match(/^(\d{4})[./\- ](\d{1,2})[./\- ](\d{1,2})$/)
   if (match) {
-    candidates.push({
-      year: Number(match[1]),
-      month: Number(match[2]),
-      day: Number(match[3])
-    })
+    candidates.push(formatYmdParts(Number(match[1]), Number(match[2]), Number(match[3])))
   }
 
-  match = normalized.match(/^(\d{1,2})[.\-/ ](\d{1,2})(?:[.\-/ ](\d{2,4}))?$/)
+  match = normalized.match(/^(\d{1,2})[./\- ](\d{1,2})(?:[./\- ](\d{2,4}))?$/)
   if (match) {
-    candidates.push({
-      day: Number(match[1]),
-      month: Number(match[2]),
-      year: match[3] ? Number(match[3]) : current.year
-    })
+    candidates.push(
+      formatYmdParts(
+        match[3] ? Number(match[3]) : current.year,
+        Number(match[2]),
+        Number(match[1])
+      )
+    )
   }
 
   match = normalized.match(/^(\d{1,2})$/)
   if (match) {
-    candidates.push({
-      day: Number(match[1]),
-      month: current.month,
-      year: current.year
-    })
+    const nearest = findNearestFutureDateByDay(Number(match[1]), current)
+    if (nearest) {
+      candidates.push(nearest)
+    }
   }
 
   match = normalized.match(/^(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?$/)
   if (match && MONTHS[match[2]]) {
-    candidates.push({
-      day: Number(match[1]),
-      month: MONTHS[match[2]],
-      year: match[3] ? Number(match[3]) : current.year
-    })
+    candidates.push(
+      formatYmdParts(
+        match[3] ? Number(match[3]) : current.year,
+        MONTHS[match[2]],
+        Number(match[1])
+      )
+    )
   }
 
   match = normalized.match(/^([а-яё]+)\s+(\d{1,2})(?:\s+(\d{4}))?$/)
   if (match && MONTHS[match[1]]) {
-    candidates.push({
-      day: Number(match[2]),
-      month: MONTHS[match[1]],
-      year: match[3] ? Number(match[3]) : current.year
-    })
+    candidates.push(
+      formatYmdParts(
+        match[3] ? Number(match[3]) : current.year,
+        MONTHS[match[1]],
+        Number(match[2])
+      )
+    )
   }
 
   for (const candidate of candidates) {
-    const formatted = formatYmdParts(candidate.year, candidate.month, candidate.day)
-    if (!isValidYmd(formatted)) {
+    const validated = validateParsedDate(candidate, current.date)
+    if (!validated) {
       continue
     }
 
-    if (formatted < current.date) {
-      return { ok: false, error: 'Нельзя подписаться на прошедшую дату.' }
-    }
-
-    if (formatted > MAX_ALERT_DATE) {
-      return { ok: false, error: `Дата должна быть не позже ${formatDateHuman(MAX_ALERT_DATE)}.` }
-    }
-
-    return {
-      ok: true,
-      date: formatted,
-      requiresFutureModeChoice: daysBetweenYmd(current.date, formatted) > 2
-    }
+    return validated
   }
 
   return {
     ok: false,
-    error: 'Не понял дату. Поддерживаются форматы: 26, 26.07, 26/07/2026, 2026-07-26, 26 июля.'
+    error:
+      'Не понял дату. Примеры: 27, 27.06, 27/06/2026, 2026-06-27, 27 июня. Можно несколько дат через запятую.'
+  }
+}
+
+function trySplitRange(segment: string, current: ReturnType<typeof getCurrentMskContext>): [string, string] | null {
+  const separators = ['-', '–', '—']
+
+  for (let index = 0; index < segment.length; index += 1) {
+    if (!separators.includes(segment[index])) {
+      continue
+    }
+
+    const left = segment.slice(0, index).trim()
+    const right = segment.slice(index + 1).trim()
+
+    if (!left || !right) {
+      continue
+    }
+
+    const leftParsed = parseSingleFlexibleDateToken(left, current)
+    const rightParsed = parseSingleFlexibleDateToken(right, current)
+
+    if (leftParsed.ok && rightParsed.ok && leftParsed.date && rightParsed.date) {
+      return [leftParsed.date, rightParsed.date]
+    }
+  }
+
+  return null
+}
+
+export function parseFlexibleDateInput(input: string): ParsedDateResult {
+  const current = getCurrentMskContext()
+  const raw = String(input || '').trim()
+
+  if (!raw) {
+    return { ok: false, error: 'Дата не указана.' }
+  }
+
+  const parts = raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  if (!parts.length) {
+    return { ok: false, error: 'Дата не указана.' }
+  }
+
+  const dates: string[] = []
+
+  for (const part of parts) {
+    const range = trySplitRange(part, current)
+
+    if (range) {
+      const [from, to] = range
+
+      if (to < from) {
+        return { ok: false, error: 'В диапазоне конечная дата должна быть не раньше начальной.' }
+      }
+
+      const diff = daysBetweenYmd(from, to)
+      if (diff > 2) {
+        return { ok: false, error: 'Диапазон дат может быть только на 3 дня или меньше.' }
+      }
+
+      for (let index = 0; index <= diff; index += 1) {
+        dates.push(addDaysYmd(from, index))
+      }
+      continue
+    }
+
+    const parsed = parseSingleFlexibleDateToken(part, current)
+    if (!parsed.ok || !parsed.date) {
+      return parsed
+    }
+
+    dates.push(parsed.date)
+  }
+
+  const uniqueDates = Array.from(new Set(dates)).sort((left, right) => left.localeCompare(right))
+
+  return {
+    ok: true,
+    date: uniqueDates[0],
+    dates: uniqueDates,
+    requiresFutureModeChoice: uniqueDates.some((date) => daysBetweenYmd(current.date, date) > 2)
   }
 }

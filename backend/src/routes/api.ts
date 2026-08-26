@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { CORS_ORIGIN, PORT, VENUES_QUERY } from '../config'
-import { listActiveSubscriptions } from '../db'
+import { CORS_ORIGIN, CONSENT_DOCUMENT_URL, PORT, VENUES_QUERY } from '../config'
+import { getConsent, listActiveSubscriptions, setConsentAccepted } from '../db'
 import { callOutdoorApi } from '../services/outdoor'
 import { buildQueryString } from '../utils/domain'
 
@@ -29,6 +29,78 @@ function sendUpstreamResult(
 export function createApiRouter(): Router {
   const router = Router()
 
+  const getConsentHandler = (req: { query: Record<string, unknown> }, res: { status: (code: number) => { json: (body: unknown) => void }; json: (body: unknown) => void }) => {
+    const clientId = String(req.query.client_id || '').trim()
+
+    if (!clientId) {
+      res.status(400).json({
+        status: 400,
+        error: 'client_id_required',
+        message: 'client_id is required'
+      })
+      return
+    }
+
+    const consent = getConsent('web', clientId)
+
+    if (!consent?.accepted) {
+      res.status(404).json({
+        status: 404,
+        accepted: false,
+        document_url: CONSENT_DOCUMENT_URL
+      })
+      return
+    }
+
+    res.json({
+      status: 200,
+      accepted: true,
+      client_id: clientId,
+      document_url: consent.document_url,
+      accepted_at: consent.accepted_at,
+      source: consent.source
+    })
+  }
+
+  const saveConsentHandler = (req: { body?: Record<string, unknown> }, res: { status: (code: number) => { json: (body: unknown) => void }; json: (body: unknown) => void }) => {
+    const clientId = String(req.body?.client_id || '').trim()
+    const accepted = req.body?.accepted === true
+
+    if (!clientId) {
+      res.status(400).json({
+        status: 400,
+        error: 'client_id_required',
+        message: 'client_id is required'
+      })
+      return
+    }
+
+    if (!accepted) {
+      res.status(400).json({
+        status: 400,
+        error: 'accepted_required',
+        message: 'accepted must be true'
+      })
+      return
+    }
+
+    const consent = setConsentAccepted({
+      subjectType: 'web',
+      subjectId: clientId,
+      source: 'frontend',
+      documentUrl: CONSENT_DOCUMENT_URL
+    })
+
+    res.json({
+      status: 200,
+      accepted: true,
+      client_id: clientId,
+      document_url: consent.document_url,
+      accepted_at: consent.accepted_at,
+      source: consent.source
+    })
+  }
+
   router.get('/health', (req, res) => {
     res.json({
       ok: true,
@@ -41,6 +113,15 @@ export function createApiRouter(): Router {
     const result = await callOutdoorApi(`/items/venues?${VENUES_QUERY}`, 'GET')
     sendUpstreamResult(res, result)
   })
+
+  router.get('/api/consent', getConsentHandler)
+  router.post('/api/consent', saveConsentHandler)
+  router.get('/api/consent-status', getConsentHandler)
+  router.post('/api/consent-status', saveConsentHandler)
+  router.get('/consent', getConsentHandler)
+  router.post('/consent', saveConsentHandler)
+  router.get('/consent-status', getConsentHandler)
+  router.post('/consent-status', saveConsentHandler)
 
   router.get('/api/date-options', async (req, res) => {
     const query = buildQueryString({

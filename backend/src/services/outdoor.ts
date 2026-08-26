@@ -196,3 +196,56 @@ export async function fetchAvailabilityForMonitor(
     body: result.isJson ? result.body : {}
   }
 }
+
+export async function createBookingSession(payload: {
+  event_type: string
+  venue_id: number
+  court_id: number
+  date: string
+}): Promise<OutdoorApiResult> {
+  return callOutdoorApi('/booking/session', 'POST', payload)
+}
+
+export async function holdBookingSlot(
+  sessionId: string,
+  payload: {
+    event_id: number
+    starts_at: string
+    ends_at: string
+    duration_minutes: number
+    tickets_count: number
+  }
+): Promise<OutdoorApiResult> {
+  return callOutdoorApi(`/booking/session/${encodeURIComponent(sessionId)}/hold`, 'PUT', payload)
+}
+
+export async function sendBookingSms(payload: {
+  session_id: string
+  hold_id: string
+  phone: string
+}): Promise<OutdoorApiResult> {
+  return callOutdoorApi('/booking/sms/send', 'POST', payload)
+}
+
+export async function verifyBookingSms(payload: {
+  session_id: string
+  hold_id: string
+  phone: string
+  code: string
+  otp: string
+}): Promise<OutdoorApiResult> {
+  return callOutdoorApi('/booking/sms/verify', 'POST', payload)
+}
+
+export async function confirmBooking(payload: {
+  session_id: string
+  hold_id: string
+  first_name: string
+  last_name: string
+  phone: string
+  email: string
+  privacy_policy_accepted: boolean
+  personal_data_accepted: boolean
+}): Promise<OutdoorApiResult> {
+  return callOutdoorApi('/booking/confirm', 'POST', payload)
+}
